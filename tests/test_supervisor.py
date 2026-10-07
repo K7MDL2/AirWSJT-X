@@ -103,6 +103,21 @@ class SupervisorTests(unittest.TestCase):
         self.assertEqual((cmd1.target_azimuth_deg, cmd1.target_elevation_deg), (100, 10))
         self.assertEqual((cmd2.target_azimuth_deg, cmd2.target_elevation_deg), (110, 12))
         self.assertEqual((cmd3.target_azimuth_deg, cmd3.target_elevation_deg), (120, 14))
+        self.assertEqual(self.supervisor.session.state, SessionState.TRACKING)
+
+    def test_finish_requires_active_qso_unless_abort(self) -> None:
+        self.supervisor.begin_session(
+            station_a=self.station_a,
+            station_b=self.station_b,
+            band_mhz=1296.0,
+            frequency_hz=1296150000,
+            tracks=[self.valid_track],
+        )
+        with self.assertRaises(ValueError):
+            self.supervisor.finish_qso(abort=False)
+
+        self.supervisor.finish_qso(abort=True)
+        self.assertEqual(self.supervisor.session.state, SessionState.ABORTED)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import fabs
 
 
 @dataclass
@@ -29,8 +28,8 @@ class RotatorController:
         target_azimuth_deg: float,
         target_elevation_deg: float,
     ) -> bool:
-        az_ok = fabs(current_azimuth_deg - target_azimuth_deg) <= self.tolerance_deg
-        el_ok = fabs(current_elevation_deg - target_elevation_deg) <= self.tolerance_deg
+        az_ok = abs(current_azimuth_deg - target_azimuth_deg) <= self.tolerance_deg
+        el_ok = abs(current_elevation_deg - target_elevation_deg) <= self.tolerance_deg
         if az_ok and el_ok:
             self._stable_samples += 1
         else:

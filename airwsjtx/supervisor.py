@@ -54,7 +54,9 @@ class AirWSJTXSupervisor:
         best = ranked[0]
         if best.total_score < self.config.minimum_score_to_lock:
             raise ValueError("No aircraft passed lock threshold.")
-        selected = next(track for track in tracks if track.aircraft_id == best.aircraft_id)
+        selected = next((track for track in tracks if track.aircraft_id == best.aircraft_id), None)
+        if selected is None:
+            raise ValueError("Selected aircraft track could not be resolved.")
         self._selected_track = selected
         self._track_cursor = 0
         self.session.lock_aircraft(best.aircraft_id)
@@ -91,4 +93,6 @@ class AirWSJTXSupervisor:
         if abort:
             self.session.abort()
         else:
+            if self.session.state != SessionState.ACTIVE_QSO:
+                raise ValueError("Cannot complete QSO before it starts.")
             self.session.complete()
