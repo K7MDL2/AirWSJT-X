@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
+import StationPanel from "./StationPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -127,6 +128,8 @@ export default function App() {
   const [rotatorEl, setRotatorEl] = useState(0);
   const [rotatorTargetAz, setRotatorTargetAz] = useState<number | null>(null);
   const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
+  const [dxCallsign, setDxCallsign] = useState<string | null>(null);
+  const [dxGrid, setDxGrid] = useState<string | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((msg: string) => {
@@ -320,6 +323,34 @@ export default function App() {
             </div>
             {wsjtxLive.dx_call && <div>DX: <span className="on">{wsjtxLive.dx_call}</span></div>}
           </div>
+        </div>
+
+        {/* Station selection */}
+        <div className="card">
+          <h3>Stations</h3>
+          <StationPanel
+            myCallsign={wsjtxLive.de_call}
+            myGrid={wsjtxLive.de_grid}
+            dxCallsign={dxCallsign}
+            dxGrid={dxGrid}
+            onSetDx={(call, grid) => {
+              setDxCallsign(call);
+              setDxGrid(grid);
+              setLocatorB(grid);
+              rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: grid })
+                .catch(e => addLog(`Station: ${e}`));
+              addLog(`DX set: ${call} ${grid}`);
+            }}
+            onSetMy={(call, grid) => {
+              addLog(`My station override: ${call} ${grid}`);
+              rpc("airscout_set_stations", { locator_a: grid, locator_b: dxGrid })
+                .catch(e => addLog(`Station: ${e}`));
+            }}
+            onLookup={async (call) => {
+              const result = await rpc("callsign_lookup", { callsign: call });
+              return result as { callsign: string; name: string | null; grid: string | null; lat: number | null; lon: number | null; country: string | null; source: string };
+            }}
+          />
         </div>
 
         {/* QSO controls */}

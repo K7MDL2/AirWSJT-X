@@ -322,6 +322,10 @@ export default function RotatorPanel({
   const azErr = targetAz !== null ? ((currentAz - targetAz + 540) % 360 - 180) : null;
   const elErr = targetEl !== null ? currentEl - targetEl : null;
 
+  const compassSize = 130;
+  const elevWidth = 130;
+  const elevHeight = 73;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
@@ -359,7 +363,7 @@ export default function RotatorPanel({
           <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>
             Azimuth
           </div>
-          <CompassRose current={currentAz} target={targetAz} size={260}
+          <CompassRose current={currentAz} target={targetAz} size={compassSize}
             onClick={connected ? handleCompassClick : undefined} />
           {azErr !== null && (
             <div style={{ fontSize: 12, color: Math.abs(azErr) < 2 ? "#3fb950" : "#d29922", fontFamily: "monospace" }}>
@@ -373,7 +377,7 @@ export default function RotatorPanel({
           <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>
             Elevation
           </div>
-          <ElevationArc current={currentEl} target={targetEl} width={260} height={145}
+          <ElevationArc current={currentEl} target={targetEl} width={elevWidth} height={elevHeight}
             onClick={connected ? handleElevationClick : undefined} />
           {elErr !== null && (
             <div style={{ fontSize: 12, color: Math.abs(elErr) < 2 ? "#3fb950" : "#d29922", fontFamily: "monospace" }}>

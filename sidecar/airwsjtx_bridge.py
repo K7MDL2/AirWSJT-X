@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 from airwsjtx.airscout import Aircraft, Dump1090Feed, OpenSkyFeed
+from airwsjtx.callsign import lookup as lookup_callsign
 from airwsjtx.geo import locator_to_latlon, scatter_geometry
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
@@ -203,6 +204,22 @@ def handle(msg: dict) -> None:
                 "azimuth": pos.azimuth if pos else None,
                 "elevation": pos.elevation if pos else None,
             })
+
+        elif method == "callsign_lookup":
+            call = params.get("callsign", "").strip()
+            if not call:
+                _err(id_, "callsign required")
+            else:
+                info = lookup_callsign(call)
+                _ok(id_, {
+                    "callsign": info.callsign,
+                    "name": info.name,
+                    "grid": info.grid,
+                    "lat": info.lat,
+                    "lon": info.lon,
+                    "country": info.country,
+                    "source": info.source,
+                })
 
         else:
             _err(id_, f"Unknown method: {method}")
