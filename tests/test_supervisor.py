@@ -88,6 +88,22 @@ class SupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.supervisor.operator_start_qso()
 
+    def test_tracking_target_advances_with_new_samples(self) -> None:
+        moving_track = track("M1", [100, 110, 120], [10, 12, 14], [260, 255, 250])
+        self.supervisor.begin_session(
+            station_a=self.station_a,
+            station_b=self.station_b,
+            band_mhz=1296.0,
+            frequency_hz=1296150000,
+            tracks=[moving_track],
+        )
+        cmd1 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
+        cmd2 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
+        cmd3 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
+        self.assertEqual((cmd1.target_azimuth_deg, cmd1.target_elevation_deg), (100, 10))
+        self.assertEqual((cmd2.target_azimuth_deg, cmd2.target_elevation_deg), (110, 12))
+        self.assertEqual((cmd3.target_azimuth_deg, cmd3.target_elevation_deg), (120, 14))
+
 
 if __name__ == "__main__":
     unittest.main()

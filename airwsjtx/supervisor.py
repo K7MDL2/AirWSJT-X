@@ -32,6 +32,7 @@ class AirWSJTXSupervisor:
         self.profile = profile or AirscatterOperatingProfile()
         self.session = ContactSession()
         self._selected_track: AircraftTrack | None = None
+        self._track_cursor: int = 0
 
     def begin_session(
         self,
@@ -47,14 +48,15 @@ class AirWSJTXSupervisor:
 
         self.session.set_stations(station_a, station_b)
         ranked = self.tracker.rank_candidates(tracks)
-        self.session.set_candidates(len(ranked))
         if not ranked:
             raise ValueError("No viable aircraft candidates.")
+        self.session.set_candidates(len(ranked))
         best = ranked[0]
         if best.total_score < self.config.minimum_score_to_lock:
             raise ValueError("No aircraft passed lock threshold.")
         selected = next(track for track in tracks if track.aircraft_id == best.aircraft_id)
         self._selected_track = selected
+        self._track_cursor = 0
         self.session.lock_aircraft(best.aircraft_id)
         self.wsjtx.configure_q65_15s(
             band_mhz=band_mhz,
@@ -66,7 +68,7 @@ class AirWSJTXSupervisor:
     def update_tracking(self, current_azimuth_deg: float, current_elevation_deg: float) -> RotatorCommand:
         if self._selected_track is None:
             raise ValueError("No aircraft selected.")
-        target = self._selected_track.samples[-1]
+        target = self._selected_track.samples[self._track_cursor]
         command = self.rotator.create_command(target.azimuth_deg, target.elevation_deg)
         locked = self.rotator.update_lock(
             current_azimuth_deg=current_azimuth_deg,
@@ -74,6 +76,8 @@ class AirWSJTXSupervisor:
             target_azimuth_deg=target.azimuth_deg,
             target_elevation_deg=target.elevation_deg,
         )
+        if self._track_cursor < len(self._selected_track.samples) - 1:
+            self._track_cursor += 1
         self.session.update_tracking(rotator_locked=locked)
         return command
 

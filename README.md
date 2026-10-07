@@ -28,5 +28,5 @@ The AirScatter profile provides operating conventions for discoverability while 
 ## Running tests
 
 ```bash
-python -m unittest discover -s /home/runner/work/AirWSJT-X/AirWSJT-X/tests
+python -m unittest discover -s tests
 ```
