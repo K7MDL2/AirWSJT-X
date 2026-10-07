@@ -32,7 +32,7 @@ class ContactSession:
         self.state = SessionState.STATIONS_READY
 
     def set_candidates(self, count: int) -> None:
-        if self.state not in (SessionState.STATIONS_READY, SessionState.CANDIDATES_AVAILABLE):
+        if self.state != SessionState.STATIONS_READY:
             raise ValueError("Stations must be set before candidates.")
         self.candidate_count = count
         self.state = SessionState.CANDIDATES_AVAILABLE

@@ -102,9 +102,11 @@ class SupervisorTests(unittest.TestCase):
         cmd1 = moving_supervisor.update_tracking(current_azimuth_deg=100, current_elevation_deg=10)
         cmd2 = moving_supervisor.update_tracking(current_azimuth_deg=110, current_elevation_deg=12)
         cmd3 = moving_supervisor.update_tracking(current_azimuth_deg=120, current_elevation_deg=14)
+        cmd4 = moving_supervisor.update_tracking(current_azimuth_deg=120, current_elevation_deg=14)
         self.assertEqual((cmd1.target_azimuth_deg, cmd1.target_elevation_deg), (100, 10))
         self.assertEqual((cmd2.target_azimuth_deg, cmd2.target_elevation_deg), (110, 12))
         self.assertEqual((cmd3.target_azimuth_deg, cmd3.target_elevation_deg), (120, 14))
+        self.assertEqual((cmd4.target_azimuth_deg, cmd4.target_elevation_deg), (120, 14))
         self.assertEqual(moving_supervisor.session.state, SessionState.READY)
 
     def test_finish_requires_active_qso_unless_abort(self) -> None:

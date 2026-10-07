@@ -99,5 +99,5 @@ class AirWSJTXSupervisor:
         else:
             if self.session.state != SessionState.ACTIVE_QSO:
                 raise ValueError("Cannot complete QSO before it starts.")
-            self.session.complete()
             self.wsjtx.set_ptt(False)
+            self.session.complete()
