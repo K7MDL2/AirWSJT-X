@@ -1,2 +1,10 @@
 __pycache__/
 *.pyc
+
+# Node
+node_modules/
+dist/
+
+# Rust / Tauri
+src-tauri/target/
+

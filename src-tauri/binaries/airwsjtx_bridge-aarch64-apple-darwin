@@ -1,0 +1,4 @@
+#!/bin/bash
+# Runs from target/debug/ in dev, target/release/ in release — both 3 levels below repo root
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+exec /usr/bin/python3 "${REPO_ROOT}/sidecar/airwsjtx_bridge.py"
