@@ -47,6 +47,7 @@ class AirWSJTXSupervisor:
             raise ValueError("Band below 23cm automation threshold.")
 
         self.session.set_stations(station_a, station_b)
+        self.rotator.reset()
         ranked = self.tracker.rank_candidates(tracks)
         if not ranked:
             raise ValueError("No viable aircraft candidates.")
@@ -88,11 +89,12 @@ class AirWSJTXSupervisor:
         self.wsjtx.set_ptt(True)
 
     def finish_qso(self, abort: bool = False) -> None:
-        if self.session.state == SessionState.ACTIVE_QSO:
-            self.wsjtx.set_ptt(False)
         if abort:
+            if self.session.state == SessionState.ACTIVE_QSO:
+                self.wsjtx.set_ptt(False)
             self.session.abort()
         else:
             if self.session.state != SessionState.ACTIVE_QSO:
                 raise ValueError("Cannot complete QSO before it starts.")
             self.session.complete()
+            self.wsjtx.set_ptt(False)

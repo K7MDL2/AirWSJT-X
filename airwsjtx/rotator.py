@@ -15,6 +15,9 @@ class RotatorController:
         self.stable_samples_required = stable_samples_required
         self._stable_samples = 0
 
+    def reset(self) -> None:
+        self._stable_samples = 0
+
     def create_command(self, target_azimuth_deg: float, target_elevation_deg: float) -> RotatorCommand:
         return RotatorCommand(
             target_azimuth_deg=target_azimuth_deg,

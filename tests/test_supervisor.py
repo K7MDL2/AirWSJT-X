@@ -119,6 +119,28 @@ class SupervisorTests(unittest.TestCase):
         self.supervisor.finish_qso(abort=True)
         self.assertEqual(self.supervisor.session.state, SessionState.ABORTED)
 
+    def test_rotator_lock_counter_resets_per_session(self) -> None:
+        self.supervisor.begin_session(
+            station_a=self.station_a,
+            station_b=self.station_b,
+            band_mhz=1296.0,
+            frequency_hz=1296150000,
+            tracks=[self.valid_track],
+        )
+        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        self.assertEqual(self.supervisor.session.state, SessionState.TRACKING)
+
+        self.supervisor.begin_session(
+            station_a=self.station_a,
+            station_b=self.station_b,
+            band_mhz=1296.0,
+            frequency_hz=1296150000,
+            tracks=[self.valid_track],
+        )
+        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        self.assertEqual(self.supervisor.session.state, SessionState.TRACKING)
+
 
 if __name__ == "__main__":
     unittest.main()
