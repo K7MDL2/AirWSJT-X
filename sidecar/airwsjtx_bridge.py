@@ -2,23 +2,36 @@
 """
 JSON-RPC bridge between Tauri and the airwsjtx supervisor.
 Reads newline-delimited JSON from stdin, writes responses to stdout.
-Also runs a background WSJT-X UDP listener and pushes events to stdout.
+Also runs background WSJT-X UDP listener and AirScout aircraft feeds.
 """
 from __future__ import annotations
 
 import json
 import sys
 import threading
+import time
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
+from airwsjtx.airscout import Aircraft, Dump1090Feed, OpenSkyFeed
+from airwsjtx.geo import locator_to_latlon, scatter_geometry
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
-from airwsjtx.wsjtx_udp import WSJTXListener, WSJTXStatus, WSJTXDecode
+from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXStatus
 
 supervisor = AirWSJTXSupervisor()
 _stdout_lock = threading.Lock()
+
+# AirScout state
+_aircraft_lock = threading.Lock()
+_aircraft_cache: list[Aircraft] = []
+_opensky_feed: OpenSkyFeed | None = None
+_dump1090_feed: Dump1090Feed | None = None
+
+# Station locators (updated from WSJT-X or RPC)
+_station_a_locator: str | None = None
+_station_b_locator: str | None = None
 
 
 def _emit(msg: dict) -> None:
@@ -118,6 +131,40 @@ def handle(msg: dict) -> None:
                 for c in ranked
             ])
 
+        # ── AirScout methods ──────────────────────────────────────────────────
+
+        elif method == "airscout_set_stations":
+            global _station_a_locator, _station_b_locator
+            _station_a_locator = params.get("locator_a")
+            _station_b_locator = params.get("locator_b")
+            _start_opensky_feed()
+            _ok(id_, {"locator_a": _station_a_locator, "locator_b": _station_b_locator})
+
+        elif method == "airscout_start_dump1090":
+            host = params.get("host", "127.0.0.1")
+            port = int(params.get("port", 30003))
+            _start_dump1090_feed(host, port)
+            _ok(id_, {"host": host, "port": port})
+
+        elif method == "airscout_get_aircraft":
+            result = _get_scatter_aircraft()
+            _ok(id_, result)
+
+        elif method == "airscout_fetch_now":
+            # Force an immediate OpenSky fetch
+            try:
+                if _opensky_feed:
+                    aircraft = _opensky_feed.fetch_once()
+                    with _aircraft_lock:
+                        _aircraft_cache.clear()
+                        _aircraft_cache.extend(aircraft)
+                    _emit_aircraft_update()
+                    _ok(id_, {"count": len(aircraft)})
+                else:
+                    _err(id_, "No OpenSky feed configured — call airscout_set_stations first")
+            except Exception as e:
+                _err(id_, str(e))
+
         else:
             _err(id_, f"Unknown method: {method}")
 
@@ -125,7 +172,147 @@ def handle(msg: dict) -> None:
         _err(id_, str(exc))
 
 
+# ─── AirScout feed helpers ────────────────────────────────────────────────────
+
+def _bbox_for_locators() -> tuple[float, float, float, float] | None:
+    """Compute a bounding box covering both stations + 400 km margin."""
+    if not _station_a_locator:
+        return None
+    try:
+        lat_a, lon_a = locator_to_latlon(_station_a_locator)
+        lats = [lat_a]
+        lons = [lon_a]
+        if _station_b_locator:
+            lat_b, lon_b = locator_to_latlon(_station_b_locator)
+            lats.append(lat_b)
+            lons.append(lon_b)
+        # ~4° ≈ 400 km margin
+        margin = 4.0
+        return (min(lats) - margin, min(lons) - margin,
+                max(lats) + margin, max(lons) + margin)
+    except Exception:
+        return None
+
+
+def _start_opensky_feed() -> None:
+    global _opensky_feed
+    bbox = _bbox_for_locators()
+    if not bbox:
+        return
+    if _opensky_feed:
+        _opensky_feed.stop()
+
+    def _on_update(aircraft: list[Aircraft]) -> None:
+        with _aircraft_lock:
+            _aircraft_cache.clear()
+            _aircraft_cache.extend(aircraft)
+        _emit_aircraft_update()
+
+    def _on_error(msg: str) -> None:
+        _emit({"event": "airscout_error", "data": {"source": "opensky", "message": msg}})
+
+    lat_min, lon_min, lat_max, lon_max = bbox
+    _opensky_feed = OpenSkyFeed(
+        lat_min=lat_min, lon_min=lon_min,
+        lat_max=lat_max, lon_max=lon_max,
+        interval_s=30.0,
+        on_update=_on_update,
+        on_error=_on_error,
+    )
+    _opensky_feed.start()
+    _emit({"event": "airscout_feed_started", "data": {"source": "opensky", "bbox": list(bbox)}})
+
+
+def _start_dump1090_feed(host: str, port: int) -> None:
+    global _dump1090_feed
+    if _dump1090_feed:
+        _dump1090_feed.stop()
+
+    def _on_update(aircraft: list[Aircraft]) -> None:
+        with _aircraft_lock:
+            _aircraft_cache.clear()
+            _aircraft_cache.extend(aircraft)
+        _emit_aircraft_update()
+
+    _dump1090_feed = Dump1090Feed(
+        host=host, port=port,
+        on_update=_on_update,
+        on_connected=lambda: _emit({"event": "airscout_feed_started", "data": {"source": "dump1090"}}),
+        on_disconnected=lambda: _emit({"event": "airscout_feed_stopped", "data": {"source": "dump1090"}}),
+        on_error=lambda msg: _emit({"event": "airscout_error", "data": {"source": "dump1090", "message": msg}}),
+    )
+    _dump1090_feed.start()
+
+
+def _get_scatter_aircraft() -> list[dict]:
+    """Compute scatter geometry for all cached aircraft and return sorted list."""
+    if not _station_a_locator:
+        return []
+    try:
+        lat_a, lon_a = locator_to_latlon(_station_a_locator)
+    except Exception:
+        return []
+    lat_b, lon_b = None, None
+    if _station_b_locator:
+        try:
+            lat_b, lon_b = locator_to_latlon(_station_b_locator)
+        except Exception:
+            pass
+
+    results = []
+    with _aircraft_lock:
+        snapshot = list(_aircraft_cache)
+
+    for ac in snapshot:
+        if not ac.has_position:
+            continue
+        geo = scatter_geometry(
+            lat_a, lon_a,
+            lat_b if lat_b is not None else lat_a,
+            lon_b if lon_b is not None else lon_a,
+            ac.lat, ac.lon, ac.altitude_m,  # type: ignore[arg-type]
+        )
+        results.append({
+            "icao24": ac.icao24,
+            "callsign": ac.callsign or ac.icao24,
+            "lat": round(ac.lat, 4),       # type: ignore[arg-type]
+            "lon": round(ac.lon, 4),       # type: ignore[arg-type]
+            "altitude_m": round(ac.altitude_m),  # type: ignore[arg-type]
+            "altitude_ft": round(ac.altitude_m * 3.28084),  # type: ignore[arg-type]
+            "velocity_kts": round(ac.velocity_ms * 1.94384) if ac.velocity_ms else None,
+            "heading_deg": round(ac.heading_deg) if ac.heading_deg else None,
+            **geo,
+        })
+
+    results.sort(key=lambda r: r["scatter_score"], reverse=True)
+    return results
+
+
+def _emit_aircraft_update() -> None:
+    aircraft = _get_scatter_aircraft()
+    _emit({
+        "event": "airscout_update",
+        "data": {
+            "aircraft": aircraft[:20],  # top-20 by scatter score
+            "total": len(aircraft),
+            "station_a": _station_a_locator,
+            "station_b": _station_b_locator,
+        },
+    })
+
+
 def _on_wsjtx_status(st: WSJTXStatus) -> None:
+    global _station_a_locator
+    # Auto-populate station A locator from WSJT-X de_grid
+    if st.de_grid and st.de_grid != _station_a_locator:
+        _station_a_locator = st.de_grid
+        _start_opensky_feed()
+    # Auto-populate station B locator from DX grid if set
+    if st.dx_grid:
+        global _station_b_locator
+        if st.dx_grid != _station_b_locator:
+            _station_b_locator = st.dx_grid
+            _start_opensky_feed()
     _emit({
         "event": "wsjtx_status",
         "data": {

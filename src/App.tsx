@@ -51,6 +51,29 @@ interface WsjtxDecodeEntry {
   mode: string | null;
   ts: string;
 }
+interface AircraftEntry {
+  icao24: string;
+  callsign: string;
+  lat: number;
+  lon: number;
+  altitude_ft: number;
+  velocity_kts: number | null;
+  heading_deg: number | null;
+  az_a: number;
+  el_a: number;
+  range_a_km: number;
+  az_b: number;
+  el_b: number;
+  range_b_km: number;
+  off_path_deg: number;
+  scatter_score: number;
+}
+interface AirscoutUpdate {
+  aircraft: AircraftEntry[];
+  total: number;
+  station_a: string | null;
+  station_b: string | null;
+}
 
 // ─── Sidecar RPC ──────────────────────────────────────────────────────────────
 
@@ -104,6 +127,8 @@ export default function App() {
     rx_df: null, tx_df: null, config_name: null,
   });
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
+  const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
+  const [locatorB, setLocatorB] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((msg: string) => {
@@ -154,6 +179,12 @@ export default function App() {
             };
             setDecodes(d => [entry, ...d.slice(0, 49)]);
             addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
+          } else if (evt === "airscout_update") {
+            setAirscout(evtData as unknown as AirscoutUpdate);
+          } else if (evt === "airscout_feed_started") {
+            addLog(`AirScout feed started: ${evtData.source}`);
+          } else if (evt === "airscout_error") {
+            addLog(`AirScout error (${evtData.source}): ${evtData.message}`);
           }
           return;
         }
@@ -362,6 +393,89 @@ export default function App() {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* AirScout aircraft scatter table */}
+        <div className="card">
+          <h3>AirScout — Scatter Aircraft
+            {airscout && <span style={{color:"var(--text-muted)",fontWeight:400,marginLeft:8,fontSize:11}}>
+              {airscout.total} in view · {airscout.station_a ?? "?"} → {airscout.station_b ?? "set DX locator"}
+            </span>}
+          </h3>
+          {!airscout && (
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <input
+                placeholder="DX locator e.g. IO91"
+                value={locatorB}
+                onChange={e => setLocatorB(e.target.value.toUpperCase())}
+                style={{background:"var(--surface)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:4,padding:"4px 8px",width:120,fontFamily:"monospace"}}
+              />
+              <button className="btn-secondary" onClick={async () => {
+                try { await rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: locatorB || null }); }
+                catch(e) { addLog(`Error: ${e}`); }
+              }}>Set stations</button>
+              <button className="btn-secondary" onClick={async () => {
+                try { await rpc("airscout_fetch_now", {}); addLog("Fetching aircraft from OpenSky…"); }
+                catch(e) { addLog(`Error: ${e}`); }
+              }}>Fetch now</button>
+            </div>
+          )}
+          {airscout && airscout.aircraft.length === 0 && (
+            <div style={{color:"var(--text-muted)",fontSize:12,padding:"8px 0"}}>No aircraft with positive elevation in scatter path yet.</div>
+          )}
+          {airscout && airscout.aircraft.length > 0 && (
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}}>
+                <thead>
+                  <tr style={{color:"var(--text-muted)",borderBottom:"1px solid var(--border)"}}>
+                    <th style={{textAlign:"left",padding:"2px 6px"}}>Call</th>
+                    <th style={{padding:"2px 6px"}}>FL</th>
+                    <th style={{padding:"2px 6px"}}>Score</th>
+                    <th style={{padding:"2px 6px"}}>Az-A</th>
+                    <th style={{padding:"2px 6px"}}>El-A</th>
+                    <th style={{padding:"2px 6px"}}>Az-B</th>
+                    <th style={{padding:"2px 6px"}}>El-B</th>
+                    <th style={{padding:"2px 6px"}}>Off°</th>
+                    <th style={{padding:"2px 6px"}}>km-A</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {airscout.aircraft.map((ac, i) => {
+                    const scoreColor = ac.scatter_score >= 0.5 ? "var(--green)" : ac.scatter_score >= 0.25 ? "var(--yellow)" : "var(--text-muted)";
+                    return (
+                      <tr key={ac.icao24} style={{borderBottom:"1px solid var(--border)",background: i===0 ? "rgba(88,166,255,0.06)" : undefined}}>
+                        <td style={{padding:"3px 6px",color:"var(--accent)",fontWeight:i===0?700:400}}>{ac.callsign}</td>
+                        <td style={{padding:"3px 6px",textAlign:"center"}}>{Math.round(ac.altitude_ft/100)}</td>
+                        <td style={{padding:"3px 6px",textAlign:"center",color:scoreColor,fontWeight:600}}>{(ac.scatter_score*100).toFixed(0)}%</td>
+                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.az_a}°</td>
+                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.el_a>0&&ac.el_a<20 ? "var(--green)" : "var(--text-muted)"}}>{ac.el_a}°</td>
+                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.az_b}°</td>
+                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.el_b>0&&ac.el_b<20 ? "var(--green)" : "var(--text-muted)"}}>{ac.el_b}°</td>
+                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.off_path_deg<30?"var(--green)":ac.off_path_deg<60?"var(--yellow)":"var(--text-muted)"}}>{ac.off_path_deg}°</td>
+                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.range_a_km}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <button className="btn-secondary" style={{fontSize:11,padding:"4px 10px"}} onClick={async () => {
+                  try { await rpc("airscout_fetch_now", {}); addLog("Refreshing aircraft…"); }
+                  catch(e) { addLog(`Error: ${e}`); }
+                }}>↻ Refresh</button>
+                <input
+                  placeholder="Override DX locator"
+                  value={locatorB}
+                  onChange={e => setLocatorB(e.target.value.toUpperCase())}
+                  style={{background:"var(--surface)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:4,padding:"2px 6px",width:110,fontFamily:"monospace",fontSize:11}}
+                />
+                <button className="btn-secondary" style={{fontSize:11,padding:"4px 10px"}} onClick={async () => {
+                  try { await rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: locatorB || airscout?.station_b }); }
+                  catch(e) { addLog(`Error: ${e}`); }
+                }}>Set DX</button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Candidates */}
