@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
 import StationPanel from "./StationPanel";
+import PlaneLockPanel from "./PlaneLockPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -130,6 +131,13 @@ export default function App() {
   const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
   const [dxCallsign, setDxCallsign] = useState<string | null>(null);
   const [dxGrid, setDxGrid] = useState<string | null>(null);
+  const [autoLock, setAutoLock] = useState(true);
+  const [lockedPlane, setLockedPlane] = useState<{
+    icao24: string; callsign: string; altitude_ft: number;
+    az_a: number; el_a: number; az_b: number; el_b: number;
+    scatter_score: number; off_path_deg: number; state: string;
+    rotator_az?: number | null; rotator_el?: number | null;
+  } | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((msg: string) => {
@@ -197,6 +205,25 @@ export default function App() {
             addLog("Rotator disconnected");
           } else if (evt === "rotator_error") {
             addLog(`Rotator: ${evtData.message}`);
+          } else if (evt === "plane_locked") {
+            const d = evtData as typeof lockedPlane;
+            setLockedPlane(d);
+            setStatus(s => s ? { ...s, state: (evtData.state as string) } : s);
+            addLog(`🔒 Locked: ${evtData.callsign} FL${Math.round((evtData.altitude_ft as number)/100)} score=${((evtData.scatter_score as number)*100).toFixed(0)}%`);
+          } else if (evt === "plane_tracking") {
+            setLockedPlane(prev => prev ? {
+              ...prev,
+              az_a: evtData.az_a as number,
+              el_a: evtData.el_a as number,
+              scatter_score: evtData.scatter_score as number,
+              state: evtData.state as string,
+              rotator_az: evtData.rotator_az as number | null,
+              rotator_el: evtData.rotator_el as number | null,
+            } : null);
+            setStatus(s => s ? { ...s, state: evtData.state as string } : s);
+          } else if (evt === "plane_unlocked" || evt === "plane_out_of_window") {
+            setLockedPlane(null);
+            if (evt === "plane_out_of_window") addLog(`✈ Aircraft left scatter window`);
           }
           return;
         }
@@ -337,6 +364,8 @@ export default function App() {
               setDxCallsign(call);
               setDxGrid(grid);
               setLocatorB(grid);
+              rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: call })
+                .catch(() => {});
               rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: grid })
                 .catch(e => addLog(`Station: ${e}`));
               addLog(`DX set: ${call} ${grid}`);
@@ -350,6 +379,38 @@ export default function App() {
               const result = await rpc("callsign_lookup", { callsign: call });
               return result as { callsign: string; name: string | null; grid: string | null; lat: number | null; lon: number | null; country: string | null; source: string };
             }}
+          />
+        </div>
+
+        {/* Plane lock + auto-tracking */}
+        <div className="card">
+          <h3>Aircraft Lock</h3>
+          <PlaneLockPanel
+            locked={lockedPlane}
+            autoLock={autoLock}
+            sessionState={state}
+            onAutoLockToggle={(v) => {
+              setAutoLock(v);
+              rpc("auto_lock_set", { enabled: v }).catch(() => {});
+            }}
+            onUnlock={() => {
+              setLockedPlane(null);
+              rpc("unlock_aircraft", {}).catch(() => {});
+            }}
+            onLockAircraft={(icao24) => {
+              rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`));
+            }}
+            aircraft={(airscout?.aircraft ?? []).map(ac => ({
+              icao24: ac.icao24,
+              callsign: ac.callsign,
+              altitude_ft: ac.altitude_ft,
+              scatter_score: ac.scatter_score,
+              az_a: ac.az_a,
+              el_a: ac.el_a,
+              az_b: ac.az_b,
+              el_b: ac.el_b,
+              off_path_deg: ac.off_path_deg,
+            }))}
           />
         </div>
 

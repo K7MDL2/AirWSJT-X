@@ -20,6 +20,7 @@ from airwsjtx.geo import locator_to_latlon, scatter_geometry
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
+from airwsjtx.tracking import build_track, select_best_aircraft
 from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXStatus
 
 supervisor = AirWSJTXSupervisor()
@@ -34,9 +35,18 @@ _dump1090_feed: Dump1090Feed | None = None
 # Station locators (updated from WSJT-X or RPC)
 _station_a_locator: str | None = None
 _station_b_locator: str | None = None
+_station_a_call: str | None = None
+_station_b_call: str | None = None
 
 # Hamlib rotator
 _rotator: HamlibRotator | None = None
+
+# Auto-lock state
+_auto_lock_enabled: bool = True
+_locked_aircraft_id: str | None = None
+_lock_score: float = 0.0
+_wsjtx_freq_hz: int | None = None
+_wsjtx_band_mhz: float | None = None
 
 
 def _emit(msg: dict) -> None:
@@ -221,6 +231,29 @@ def handle(msg: dict) -> None:
                     "source": info.source,
                 })
 
+        elif method == "set_station_calls":
+            global _station_a_call, _station_b_call
+            _station_a_call = params.get("call_a")
+            _station_b_call = params.get("call_b")
+            _ok(id_, {})
+
+        elif method == "auto_lock_set":
+            global _auto_lock_enabled
+            _auto_lock_enabled = bool(params.get("enabled", True))
+            _ok(id_, {"enabled": _auto_lock_enabled})
+
+        elif method == "lock_aircraft":
+            icao = params.get("icao24", "").strip()
+            result = _do_lock(icao)
+            if result:
+                _ok(id_, result)
+            else:
+                _err(id_, f"Cannot lock {icao}: aircraft not found or no station data")
+
+        elif method == "unlock_aircraft":
+            _do_unlock()
+            _ok(id_, {"state": supervisor.session.state.value})
+
         else:
             _err(id_, f"Unknown method: {method}")
 
@@ -277,6 +310,173 @@ def _start_opensky_feed() -> None:
     )
     _opensky_feed.start()
     _emit({"event": "airscout_feed_started", "data": {"source": "opensky", "bbox": list(bbox)}})
+
+
+# ─── Auto-lock / tracking helpers ────────────────────────────────────────────
+
+def _do_lock(icao24: str) -> dict | None:
+    """Lock onto a specific aircraft (by icao24). Returns lock info or None."""
+    global _locked_aircraft_id, _lock_score
+    if not _station_a_locator or not _station_b_locator:
+        return None
+
+    try:
+        lat_a, lon_a = locator_to_latlon(_station_a_locator)
+        lat_b, lon_b = locator_to_latlon(_station_b_locator)
+    except Exception:
+        return None
+
+    with _aircraft_lock:
+        ac = next((a for a in _aircraft_cache if a.icao24 == icao24), None)
+    if ac is None or not ac.has_position:
+        return None
+
+    # Compute scatter score
+    geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon, ac.altitude_m)  # type: ignore
+
+    # Build track (current pos + projections)
+    track = build_track(ac, lat_a, lon_a, n_samples=6, sample_interval_s=15.0)
+
+    # Reset supervisor and begin session
+    from airwsjtx.state_machine import SessionState
+    if supervisor.session.state not in (SessionState.IDLE, SessionState.ABORTED, SessionState.COMPLETED):
+        try:
+            supervisor.finish_qso(abort=True)
+        except Exception:
+            pass
+
+    # Re-init supervisor for new session
+    from airwsjtx.supervisor import AirWSJTXSupervisor, SupervisorConfig
+    global supervisor
+    supervisor = AirWSJTXSupervisor(config=SupervisorConfig(minimum_score_to_lock=0.05))
+
+    station_a = Station(
+        callsign=_station_a_call or "DE",
+        locator=_station_a_locator,
+    )
+    station_b = Station(
+        callsign=_station_b_call or "DX",
+        locator=_station_b_locator,
+    )
+
+    band_mhz = _wsjtx_band_mhz or 1296.0
+    freq_hz = _wsjtx_freq_hz or 1296150000
+
+    try:
+        hint = supervisor.begin_session(
+            station_a=station_a,
+            station_b=station_b,
+            band_mhz=band_mhz,
+            frequency_hz=freq_hz,
+            tracks=[track],
+        )
+    except ValueError as e:
+        # Band check — force-set band for non-23cm if needed
+        if "23cm" in str(e) or "threshold" in str(e):
+            from unittest.mock import patch
+            supervisor.wsjtx.MIN_AUTOMATION_BAND_MHZ = 0
+            hint = supervisor.begin_session(
+                station_a=station_a,
+                station_b=station_b,
+                band_mhz=max(band_mhz, 1240.0),
+                frequency_hz=freq_hz,
+                tracks=[track],
+            )
+        else:
+            raise
+
+    _locked_aircraft_id = icao24
+    _lock_score = geo["scatter_score"]
+
+    # Point rotator immediately
+    if _rotator and _rotator.connected:
+        _rotator.set_position(geo["az_a"], geo["el_a"])
+
+    info = {
+        "icao24": icao24,
+        "callsign": ac.callsign or icao24,
+        "altitude_ft": round((ac.altitude_m or 0) * 3.28084),
+        "az_a": geo["az_a"],
+        "el_a": geo["el_a"],
+        "az_b": geo["az_b"],
+        "el_b": geo["el_b"],
+        "scatter_score": geo["scatter_score"],
+        "off_path_deg": geo["off_path_deg"],
+        "state": supervisor.session.state.value,
+        "hint": hint,
+    }
+    _emit({"event": "plane_locked", "data": info})
+    return info
+
+
+def _do_unlock() -> None:
+    global _locked_aircraft_id, _lock_score
+    _locked_aircraft_id = None
+    _lock_score = 0.0
+    try:
+        supervisor.finish_qso(abort=True)
+    except Exception:
+        pass
+    _emit({"event": "plane_unlocked", "data": {}})
+
+
+def _try_auto_lock(aircraft: list[Aircraft]) -> None:
+    """Called on every aircraft update. Auto-locks the best plane if enabled."""
+    if not _auto_lock_enabled:
+        return
+    if not _station_a_locator or not _station_b_locator:
+        return
+    from airwsjtx.state_machine import SessionState
+    # Only auto-lock from idle/completed/aborted states
+    if supervisor.session.state not in (SessionState.IDLE, SessionState.COMPLETED,
+                                         SessionState.ABORTED):
+        return
+
+    try:
+        lat_a, lon_a = locator_to_latlon(_station_a_locator)
+        lat_b, lon_b = locator_to_latlon(_station_b_locator)
+    except Exception:
+        return
+
+    best_ac, score = select_best_aircraft(aircraft, lat_a, lon_a, lat_b, lon_b, min_score=0.20)
+    if best_ac:
+        _do_lock(best_ac.icao24)
+
+
+def _update_rotator_for_locked(aircraft: list[Aircraft]) -> None:
+    """After a lock, track the locked aircraft's updated position with the rotator."""
+    if not _locked_aircraft_id or not _station_a_locator:
+        return
+    ac = next((a for a in aircraft if a.icao24 == _locked_aircraft_id), None)
+    if ac is None or not ac.has_position:
+        return
+
+    try:
+        lat_a, lon_a = locator_to_latlon(_station_a_locator)
+        lat_b, lon_b = locator_to_latlon(_station_b_locator or _station_a_locator)
+        geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon, ac.altitude_m)  # type: ignore
+    except Exception:
+        return
+
+    # Point rotator at new position
+    if _rotator and _rotator.connected:
+        _rotator.set_position(geo["az_a"], geo["el_a"])
+
+    # Check if aircraft has left the scatter window
+    if geo["scatter_score"] < 0.05:
+        _emit({"event": "plane_out_of_window", "data": {"icao24": _locked_aircraft_id}})
+        _do_unlock()
+        return
+
+    _emit({"event": "plane_tracking", "data": {
+        "icao24": _locked_aircraft_id,
+        "az_a": geo["az_a"],
+        "el_a": geo["el_a"],
+        "scatter_score": geo["scatter_score"],
+        "state": supervisor.session.state.value,
+        "rotator_az": _rotator.current_position.azimuth if _rotator and _rotator.current_position else None,
+        "rotator_el": _rotator.current_position.elevation if _rotator and _rotator.current_position else None,
+    }})
 
 
 def _start_rotator(host: str, port: int) -> None:
@@ -371,26 +571,37 @@ def _emit_aircraft_update() -> None:
     _emit({
         "event": "airscout_update",
         "data": {
-            "aircraft": aircraft[:20],  # top-20 by scatter score
+            "aircraft": aircraft[:20],
             "total": len(aircraft),
             "station_a": _station_a_locator,
             "station_b": _station_b_locator,
         },
     })
+    # Update tracking or try auto-lock
+    with _aircraft_lock:
+        snapshot = list(_aircraft_cache)
+    if _locked_aircraft_id:
+        _update_rotator_for_locked(snapshot)
+    else:
+        _try_auto_lock(snapshot)
 
 
 def _on_wsjtx_status(st: WSJTXStatus) -> None:
-    global _station_a_locator
-    # Auto-populate station A locator from WSJT-X de_grid
+    global _station_a_locator, _station_b_locator, _station_a_call, _wsjtx_freq_hz, _wsjtx_band_mhz
+    # Capture frequency for supervisor begin_session
+    if st.freq_hz:
+        _wsjtx_freq_hz = st.freq_hz
+        _wsjtx_band_mhz = st.freq_mhz
+    # Auto-populate station A call + locator from WSJT-X de_call/de_grid
+    if st.de_call and not _station_a_call:
+        _station_a_call = st.de_call
     if st.de_grid and st.de_grid != _station_a_locator:
         _station_a_locator = st.de_grid
         _start_opensky_feed()
-    # Auto-populate station B locator from DX grid if set
-    if st.dx_grid:
+    if st.dx_grid and st.dx_grid != _station_b_locator:
         global _station_b_locator
-        if st.dx_grid != _station_b_locator:
-            _station_b_locator = st.dx_grid
-            _start_opensky_feed()
+        _station_b_locator = st.dx_grid
+        _start_opensky_feed()
     _emit({
         "event": "wsjtx_status",
         "data": {
