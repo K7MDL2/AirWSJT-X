@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 import unittest
 
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
+from airwsjtx.rotator import RotatorController
 from airwsjtx.state_machine import SessionState
 from airwsjtx.supervisor import AirWSJTXSupervisor
 from airwsjtx.tracker import AircraftTracker
@@ -52,23 +53,21 @@ class SupervisorTests(unittest.TestCase):
             )
 
     def test_qso_requires_rotator_lock_then_operator_start(self) -> None:
+        single_target_track = track("A1", [102], [18], [250])
         hint = self.supervisor.begin_session(
             station_a=self.station_a,
             station_b=self.station_b,
             band_mhz=1296.0,
             frequency_hz=1296150000,
-            tracks=[self.valid_track],
+            tracks=[single_target_track],
         )
         self.assertIn("WSJT-X native PSK Reporter", hint)
 
         self.supervisor.update_tracking(current_azimuth_deg=80, current_elevation_deg=5)
         self.assertEqual(self.supervisor.session.state, SessionState.TRACKING)
 
-        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
-        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
-        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
-        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
-        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        for _ in range(self.supervisor.rotator.stable_samples_required):
+            self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
         self.assertEqual(self.supervisor.session.state, SessionState.READY)
 
         self.supervisor.operator_start_qso()
@@ -91,21 +90,22 @@ class SupervisorTests(unittest.TestCase):
             self.supervisor.operator_start_qso()
 
     def test_tracking_target_advances_with_new_samples(self) -> None:
+        moving_supervisor = AirWSJTXSupervisor(rotator=RotatorController(stable_samples_required=1))
         moving_track = track("M1", [100, 110, 120], [10, 12, 14], [260, 255, 250])
-        self.supervisor.begin_session(
+        moving_supervisor.begin_session(
             station_a=self.station_a,
             station_b=self.station_b,
             band_mhz=1296.0,
             frequency_hz=1296150000,
             tracks=[moving_track],
         )
-        cmd1 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
-        cmd2 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
-        cmd3 = self.supervisor.update_tracking(current_azimuth_deg=90, current_elevation_deg=8)
+        cmd1 = moving_supervisor.update_tracking(current_azimuth_deg=100, current_elevation_deg=10)
+        cmd2 = moving_supervisor.update_tracking(current_azimuth_deg=110, current_elevation_deg=12)
+        cmd3 = moving_supervisor.update_tracking(current_azimuth_deg=120, current_elevation_deg=14)
         self.assertEqual((cmd1.target_azimuth_deg, cmd1.target_elevation_deg), (100, 10))
         self.assertEqual((cmd2.target_azimuth_deg, cmd2.target_elevation_deg), (110, 12))
         self.assertEqual((cmd3.target_azimuth_deg, cmd3.target_elevation_deg), (120, 14))
-        self.assertEqual(self.supervisor.session.state, SessionState.TRACKING)
+        self.assertEqual(moving_supervisor.session.state, SessionState.READY)
 
     def test_finish_requires_active_qso_unless_abort(self) -> None:
         self.supervisor.begin_session(

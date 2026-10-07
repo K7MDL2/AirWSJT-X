@@ -79,7 +79,7 @@ class AirWSJTXSupervisor:
             target_azimuth_deg=target.azimuth_deg,
             target_elevation_deg=target.elevation_deg,
         )
-        if self._track_cursor < len(self._selected_track.samples) - 1:
+        if locked and self._track_cursor < len(self._selected_track.samples) - 1:
             self._track_cursor += 1
             self.rotator.reset()
         self.session.update_tracking(rotator_locked=locked)
