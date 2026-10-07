@@ -2,30 +2,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
-import StationPanel from "./StationPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-interface StationInfo { callsign: string; locator: string }
-interface WsjtxInfo {
-  configured: boolean; mode: string | null;
-  band_mhz: number | null; ptt_enabled: boolean;
-}
-interface SessionStatus {
-  state: string;
-  station_a: StationInfo | null;
-  station_b: StationInfo | null;
-  selected_aircraft_id: string | null;
-  candidate_count: number;
-  wsjtx: WsjtxInfo;
-}
-interface Candidate {
-  aircraft_id: string;
-  geometry_score: number;
-  stability_score: number;
-  total_score: number;
-}
 interface WsjtxLive {
   connected: boolean;
   app_id: string;
@@ -101,19 +81,10 @@ const STATE_COLOR: Record<string, string> = {
   aborted: "#f85149",
 };
 
-// ─── Demo tracks (replace with live Airscout feed) ────────────────────────────
-
-const DEMO_TRACKS = [
-  { aircraft_id: "A1", samples: [{ azimuth_deg: 120, elevation_deg: 18, slant_range_km: 240 }, { azimuth_deg: 122, elevation_deg: 19, slant_range_km: 250 }] },
-  { aircraft_id: "B2", samples: [{ azimuth_deg: 60,  elevation_deg: 4,  slant_range_km: 480 }, { azimuth_deg: 75,  elevation_deg: 5,  slant_range_km: 500 }] },
-  { aircraft_id: "C3", samples: [{ azimuth_deg: 200, elevation_deg: 11, slant_range_km: 310 }, { azimuth_deg: 198, elevation_deg: 11, slant_range_km: 315 }] },
-];
-
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [status, setStatus] = useState<SessionStatus | null>(null);
-  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [status, setStatus] = useState<{ state: string } | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [wsjtxLive, setWsjtxLive] = useState<WsjtxLive>({
     connected: false, app_id: "", freq_mhz: null, mode: null,
@@ -123,7 +94,6 @@ export default function App() {
   });
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
-  const [locatorB, setLocatorB] = useState("");
   const [rotatorConnected, setRotatorConnected] = useState(false);
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
@@ -243,7 +213,7 @@ export default function App() {
   useEffect(() => {
     const id = setInterval(async () => {
       try {
-        const s = await rpc("get_status") as SessionStatus;
+        const s = await rpc("get_status") as { state: string };
         setStatus(s);
       } catch { /* sidecar may not be up yet */ }
     }, 2000);
@@ -254,22 +224,6 @@ export default function App() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
-
-  async function beginSession() {
-    try {
-      const ranked = await rpc("rank_candidates", { tracks: DEMO_TRACKS }) as Candidate[];
-      setCandidates(ranked);
-      const result = await rpc("begin_session", {
-        station_a: { callsign: "K1AAA", locator: "JN58" },
-        station_b: { callsign: "K2BBB", locator: "JN68" },
-        band_mhz: 1296.0,
-        frequency_hz: 1296150000,
-        tracks: DEMO_TRACKS,
-      }) as { hint: string; state: string };
-      addLog(`Session started — ${result.hint}`);
-      setStatus((s) => s ? { ...s, state: result.state } : s);
-    } catch (e) { addLog(`Error: ${e}`); }
-  }
 
   async function startQso() {
     try {
@@ -289,307 +243,287 @@ export default function App() {
 
   const state = status?.state ?? "idle";
   const stateColor = STATE_COLOR[state] ?? "#8b949e";
+  const aircraft = airscout?.aircraft ?? [];
 
   return (
     <div className="app">
-      {/* Top bar */}
+
+      {/* ── Top bar ── */}
       <header className="topbar">
         <h1>AirWSJT-X</h1>
         <span className="badge" style={{ background: stateColor + "22", color: stateColor }}>
           {state.replace(/_/g, " ")}
         </span>
-        {status?.wsjtx?.ptt_enabled && (
-          <span className="badge" style={{ background: "#f8514922", color: "#f85149" }}>PTT ON</span>
+        {wsjtxLive.transmitting && (
+          <span className="badge" style={{ background: "#f8514922", color: "#f85149" }}>PTT</span>
         )}
+        <div style={{ width: 1, height: 20, background: "var(--border)", margin: "0 4px" }} />
+        {/* WSJT-X inline status */}
+        <div className="wsjtx-strip">
+          <span style={{ color: wsjtxLive.connected ? "var(--green)" : "var(--red)", fontSize: 8 }}>●</span>
+          {wsjtxLive.connected ? (
+            <>
+              <span style={{ fontFamily: "monospace", fontWeight: 700, color: "var(--accent)" }}>
+                {wsjtxLive.de_call ?? "—"}
+              </span>
+              {wsjtxLive.de_grid && <span style={{ color: "var(--text-muted)" }}>{wsjtxLive.de_grid}</span>}
+              {wsjtxLive.freq_mhz != null && (
+                <span style={{ color: "var(--text)" }}>{wsjtxLive.freq_mhz.toFixed(3)} MHz</span>
+              )}
+              {wsjtxLive.mode && (
+                <span style={{ color: "var(--text-muted)" }}>
+                  {wsjtxLive.mode}{wsjtxLive.tr_period ? `-${wsjtxLive.tr_period}s` : ""}
+                </span>
+              )}
+              <span style={{ color: wsjtxLive.decoding ? "var(--green)" : "var(--text-muted)", fontSize: 10 }}>
+                {wsjtxLive.decoding ? "DEC●" : "DEC○"}
+              </span>
+              <span style={{ color: wsjtxLive.transmitting ? "var(--red)" : "var(--text-muted)", fontSize: 10 }}>
+                {wsjtxLive.transmitting ? "TX●" : "TX○"}
+              </span>
+              {wsjtxLive.rx_df != null && (
+                <span style={{ color: "var(--text-muted)", fontSize: 11 }}>RX {wsjtxLive.rx_df}Hz</span>
+              )}
+            </>
+          ) : (
+            <span style={{ color: "var(--text-muted)" }}>WSJT-X not connected</span>
+          )}
+        </div>
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          {rotatorConnected
+            ? <span style={{ fontSize: 10, color: "var(--green)" }}>● rotctld</span>
+            : <span style={{ fontSize: 10, color: "var(--red)" }}>○ rotctld</span>}
+          {airscout && (
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+              {airscout.total} aircraft
+            </span>
+          )}
+        </div>
       </header>
 
-      {/* Sidebar */}
-      <aside className="sidebar">
-        {/* Session state */}
-        <div className="card">
-          <h3>Session</h3>
-          <div className="state-row">
-            <div className="dot" style={{ background: stateColor }} />
-            {state.replace(/_/g, " ")}
+      {/* ── 3-column content ── */}
+      <div className="content">
+
+        {/* LEFT: Stations + Plane Lock */}
+        <div className="col">
+
+          {/* Compact station cards */}
+          <div className="card">
+            <h3>Stations</h3>
+            <div className="station-compact">
+              <div className="station-pill" style={{ borderColor: "#58a6ff44" }}>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 1 }}>MY</div>
+                <div className="call" style={{ color: "var(--accent)" }}>{wsjtxLive.de_call ?? "—"}</div>
+                <div className="grid">{wsjtxLive.de_grid ?? "—"}</div>
+              </div>
+              <div style={{ color: "var(--border)", fontSize: 16 }}>→</div>
+              <div className="station-pill" style={{ borderColor: "#3fb95044" }}>
+                <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 1 }}>DX</div>
+                <div className="call" style={{ color: "var(--green)" }}>{dxCallsign ?? "—"}</div>
+                <div className="grid">{dxGrid ?? "—"}</div>
+              </div>
+            </div>
+            {/* Quick-select */}
+            <div style={{ display: "flex", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+              {[{ call: "VE7NX", grid: "CN89oh" }, { call: "W7PUA", grid: "CN84jq" }].map(s => (
+                <button key={s.call} className="btn-secondary"
+                  style={{ fontSize: 10, padding: "3px 8px",
+                    border: dxCallsign === s.call ? "1px solid var(--green)" : undefined,
+                    color: dxCallsign === s.call ? "var(--green)" : undefined }}
+                  onClick={() => {
+                    setDxCallsign(s.call); setDxGrid(s.grid);
+                    rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: s.call }).catch(() => {});
+                    rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: s.grid }).catch(() => {});
+                    addLog(`DX → ${s.call} ${s.grid}`);
+                  }}>
+                  {s.call}
+                </button>
+              ))}
+              <button className="btn-secondary" style={{ fontSize: 10, padding: "3px 8px" }}
+                onClick={async () => {
+                  const call = prompt("DX callsign:");
+                  if (!call) return;
+                  const info = await rpc("callsign_lookup", { callsign: call }) as { callsign: string; grid: string | null; name: string | null };
+                  if (info.grid) {
+                    setDxCallsign(info.callsign); setDxGrid(info.grid);
+                    rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: info.callsign }).catch(() => {});
+                    rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: info.grid }).catch(() => {});
+                    addLog(`DX → ${info.callsign} ${info.grid}${info.name ? ` (${info.name})` : ""}`);
+                  } else {
+                    addLog(`Lookup: ${call} not found`);
+                  }
+                }}>
+                + Other
+              </button>
+            </div>
           </div>
-          {status?.station_a && (
-            <div className="station-row">
-              <div>Station A <span>{status.station_a.callsign}</span></div>
-              <div>{status.station_a.locator}</div>
-            </div>
-          )}
-          {status?.station_b && (
-            <div className="station-row">
-              <div>Station B <span>{status.station_b.callsign}</span></div>
-              <div>{status.station_b.locator}</div>
-            </div>
-          )}
-          {status?.selected_aircraft_id && (
-            <div className="station-row">
-              <div>Aircraft <span>{status.selected_aircraft_id}</span></div>
-              <div>{status.candidate_count} candidates</div>
-            </div>
-          )}
-        </div>
 
-        {/* WSJT-X status */}
-        <div className="card">
-          <h3>WSJT-X {wsjtxLive.connected
-            ? <span style={{color:"var(--green)",fontWeight:600}}>● LIVE</span>
-            : <span style={{color:"var(--red)",fontWeight:600}}>○ offline</span>}
-          </h3>
-          <div className="wsjtx-status">
-            {wsjtxLive.de_call && <div>Callsign: <span className="on">{wsjtxLive.de_call}</span>{wsjtxLive.de_grid ? ` / ${wsjtxLive.de_grid}` : ""}</div>}
-            <div>Freq: <span className="on">{wsjtxLive.freq_mhz != null ? `${wsjtxLive.freq_mhz.toFixed(3)} MHz` : "—"}</span></div>
-            <div>Mode: {wsjtxLive.mode ?? "—"}{wsjtxLive.sub_mode ? `-${wsjtxLive.sub_mode}` : ""}{wsjtxLive.tr_period ? ` ${wsjtxLive.tr_period}s` : ""}</div>
-            <div>RX: {wsjtxLive.rx_df != null ? `${wsjtxLive.rx_df} Hz` : "—"} &nbsp; TX: {wsjtxLive.tx_df != null ? `${wsjtxLive.tx_df} Hz` : "—"}</div>
-            <div>
-              <span className={wsjtxLive.transmitting ? "on" : "off"}>TX {wsjtxLive.transmitting ? "ON" : "off"}</span>
-              &nbsp;·&nbsp;
-              <span className={wsjtxLive.decoding ? "on" : "off"}>Decoding {wsjtxLive.decoding ? "●" : "○"}</span>
-            </div>
-            {wsjtxLive.dx_call && <div>DX: <span className="on">{wsjtxLive.dx_call}</span></div>}
-          </div>
-        </div>
-
-        {/* Station selection */}
-        <div className="card">
-          <h3>Stations</h3>
-          <StationPanel
-            myCallsign={wsjtxLive.de_call}
-            myGrid={wsjtxLive.de_grid}
-            dxCallsign={dxCallsign}
-            dxGrid={dxGrid}
-            onSetDx={(call, grid) => {
-              setDxCallsign(call);
-              setDxGrid(grid);
-              setLocatorB(grid);
-              rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: call })
-                .catch(() => {});
-              rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: grid })
-                .catch(e => addLog(`Station: ${e}`));
-              addLog(`DX set: ${call} ${grid}`);
-            }}
-            onSetMy={(call, grid) => {
-              addLog(`My station override: ${call} ${grid}`);
-              rpc("airscout_set_stations", { locator_a: grid, locator_b: dxGrid })
-                .catch(e => addLog(`Station: ${e}`));
-            }}
-            onLookup={async (call) => {
-              const result = await rpc("callsign_lookup", { callsign: call });
-              return result as { callsign: string; name: string | null; grid: string | null; lat: number | null; lon: number | null; country: string | null; source: string };
-            }}
-          />
-        </div>
-
-        {/* Plane lock + auto-tracking */}
-        <div className="card">
-          <h3>Aircraft Lock</h3>
-          <PlaneLockPanel
-            locked={lockedPlane}
-            autoLock={autoLock}
-            sessionState={state}
-            onAutoLockToggle={(v) => {
-              setAutoLock(v);
-              rpc("auto_lock_set", { enabled: v }).catch(() => {});
-            }}
-            onUnlock={() => {
-              setLockedPlane(null);
-              rpc("unlock_aircraft", {}).catch(() => {});
-            }}
-            onLockAircraft={(icao24) => {
-              rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`));
-            }}
-            aircraft={(airscout?.aircraft ?? []).map(ac => ({
-              icao24: ac.icao24,
-              callsign: ac.callsign,
-              altitude_ft: ac.altitude_ft,
-              scatter_score: ac.scatter_score,
-              az_a: ac.az_a,
-              el_a: ac.el_a,
-              az_b: ac.az_b,
-              el_b: ac.el_b,
-              off_path_deg: ac.off_path_deg,
-            }))}
-          />
-        </div>
-
-        {/* QSO controls */}
-        <div className="card">
-          <h3>Controls</h3>
-          <div className="qso-controls">
-            <button className="btn-primary" onClick={beginSession} disabled={state !== "idle"}>
-              Begin Session
-            </button>
-            <button className="btn-success" onClick={startQso} disabled={state !== "ready"}>
-              Start QSO
-            </button>
-            <button className="btn-danger" onClick={() => finishQso(true)} disabled={["idle","completed","aborted"].includes(state)}>
-              Abort
-            </button>
-            <button className="btn-secondary" onClick={() => finishQso(false)} disabled={state !== "active_qso"}>
-              Finish QSO
-            </button>
+          {/* Plane Lock — flex fills remaining space */}
+          <div className="card flex1">
+            <PlaneLockPanel
+              locked={lockedPlane}
+              autoLock={autoLock}
+              sessionState={state}
+              onAutoLockToggle={(v) => {
+                setAutoLock(v);
+                rpc("auto_lock_set", { enabled: v }).catch(() => {});
+              }}
+              onUnlock={() => { setLockedPlane(null); rpc("unlock_aircraft", {}).catch(() => {}); }}
+              onLockAircraft={(icao24) => rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`))}
+              aircraft={aircraft.slice(0, 5).map(ac => ({
+                icao24: ac.icao24, callsign: ac.callsign, altitude_ft: ac.altitude_ft,
+                scatter_score: ac.scatter_score, az_a: ac.az_a, el_a: ac.el_a,
+                az_b: ac.az_b, el_b: ac.el_b, off_path_deg: ac.off_path_deg,
+              }))}
+            />
           </div>
         </div>
-      </aside>
 
-      {/* Main */}
-      <main className="main">
-        {/* Rotator — PST Rotator style */}
-        <div className="card">
-          <h3>Rotator</h3>
-          <RotatorPanel
-            currentAz={rotatorAz}
-            currentEl={rotatorEl}
-            targetAz={rotatorTargetAz}
-            targetEl={rotatorTargetEl}
-            connected={rotatorConnected}
-            onSetPosition={(az, el) => {
-              setRotatorTargetAz(az);
-              setRotatorTargetEl(el);
-              rpc("rotator_set", { azimuth: az, elevation: el }).catch(e => addLog(`Rotator: ${e}`));
-            }}
-            onStop={() => rpc("rotator_stop", {}).catch(e => addLog(`Rotator: ${e}`))}
-            onPark={() => { setRotatorTargetAz(0); setRotatorTargetEl(0); rpc("rotator_park", {}).catch(e => addLog(`Rotator: ${e}`)); }}
-            onConnect={(host, port) => rpc("rotator_connect", { host, port }).catch(e => addLog(`Rotator: ${e}`))}
-          />
+        {/* CENTRE: Rotator */}
+        <div className="col" style={{ alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ width: "100%", alignSelf: "stretch" }}>
+            <RotatorPanel
+              currentAz={rotatorAz} currentEl={rotatorEl}
+              targetAz={lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
+              targetEl={lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
+              connected={rotatorConnected}
+              onSetPosition={(az, el) => {
+                setRotatorTargetAz(az); setRotatorTargetEl(el);
+                rpc("rotator_set", { azimuth: az, elevation: el }).catch(e => addLog(`Rotator: ${e}`));
+              }}
+              onStop={() => rpc("rotator_stop", {}).catch(e => addLog(`Rotator: ${e}`))}
+              onPark={() => { setRotatorTargetAz(0); setRotatorTargetEl(0); rpc("rotator_park", {}).catch(e => addLog(`Rotator: ${e}`)); }}
+              onConnect={(host, port) => rpc("rotator_connect", { host, port }).catch(e => addLog(`Rotator: ${e}`))}
+            />
+          </div>
         </div>
 
-        {/* AirScout aircraft scatter table */}
-        <div className="card">
-          <h3>AirScout — Scatter Aircraft
-            {airscout && <span style={{color:"var(--text-muted)",fontWeight:400,marginLeft:8,fontSize:11}}>
-              {airscout.total} in view · {airscout.station_a ?? "?"} → {airscout.station_b ?? "set DX locator"}
-            </span>}
-          </h3>
-          {!airscout && (
-            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
-              <input
-                placeholder="DX locator e.g. IO91"
-                value={locatorB}
-                onChange={e => setLocatorB(e.target.value.toUpperCase())}
-                style={{background:"var(--surface)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:4,padding:"4px 8px",width:120,fontFamily:"monospace"}}
-              />
-              <button className="btn-secondary" onClick={async () => {
-                try { await rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: locatorB || null }); }
-                catch(e) { addLog(`Error: ${e}`); }
-              }}>Set stations</button>
-              <button className="btn-secondary" onClick={async () => {
-                try { await rpc("airscout_fetch_now", {}); addLog("Fetching aircraft from OpenSky…"); }
-                catch(e) { addLog(`Error: ${e}`); }
-              }}>Fetch now</button>
+        {/* RIGHT: Decodes + Aircraft + Log */}
+        <div className="col">
+
+          {/* WSJT-X Decodes */}
+          <div className="card" style={{ flexShrink: 0 }}>
+            <h3>WSJT-X Decodes {wsjtxLive.connected && <span style={{ color: "var(--green)" }}>● live</span>}</h3>
+            <div className="decode-list">
+              {decodes.length === 0
+                ? <div style={{ color: "var(--text-muted)", fontSize: 11 }}>No decodes yet</div>
+                : decodes.slice(0, 8).map((d, i) => (
+                  <div key={i} className="decode-row">
+                    <span style={{ color: "var(--text-muted)" }}>{d.ts}</span>
+                    <span style={{ color: d.snr >= -10 ? "var(--green)" : d.snr >= -20 ? "var(--yellow)" : "var(--text-muted)" }}>
+                      {d.snr >= 0 ? `+${d.snr}` : d.snr}dB
+                    </span>
+                    <span style={{ color: "var(--text-muted)" }}>{d.delta_freq_hz}Hz</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{d.message ?? ""}</span>
+                  </div>
+                ))
+              }
             </div>
-          )}
-          {airscout && airscout.aircraft.length === 0 && (
-            <div style={{color:"var(--text-muted)",fontSize:12,padding:"8px 0"}}>No aircraft with positive elevation in scatter path yet.</div>
-          )}
-          {airscout && airscout.aircraft.length > 0 && (
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,fontFamily:"monospace"}}>
+          </div>
+
+          {/* Aircraft scatter table */}
+          <div className="card" style={{ flexShrink: 0 }}>
+            <h3>
+              Scatter Aircraft
+              {airscout && <span style={{ color: "var(--text-muted)", fontWeight: 400, marginLeft: 6, fontSize: 10 }}>
+                {airscout.station_a ?? "?"} → {airscout.station_b ?? "set DX"}
+                <button
+                  style={{ marginLeft: 6, padding: "1px 6px", fontSize: 9, borderRadius: 3,
+                    background: "var(--surface)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+                  onClick={() => rpc("airscout_fetch_now", {}).catch(() => {})}>
+                  ↻
+                </button>
+              </span>}
+            </h3>
+            {aircraft.length === 0 ? (
+              <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
+                {dxCallsign ? "Waiting for aircraft data…" : "Select a DX station to start"}
+              </div>
+            ) : (
+              <table className="ac-table">
                 <thead>
-                  <tr style={{color:"var(--text-muted)",borderBottom:"1px solid var(--border)"}}>
-                    <th style={{textAlign:"left",padding:"2px 6px"}}>Call</th>
-                    <th style={{padding:"2px 6px"}}>FL</th>
-                    <th style={{padding:"2px 6px"}}>Score</th>
-                    <th style={{padding:"2px 6px"}}>Az-A</th>
-                    <th style={{padding:"2px 6px"}}>El-A</th>
-                    <th style={{padding:"2px 6px"}}>Az-B</th>
-                    <th style={{padding:"2px 6px"}}>El-B</th>
-                    <th style={{padding:"2px 6px"}}>Off°</th>
-                    <th style={{padding:"2px 6px"}}>km-A</th>
+                  <tr>
+                    <th>Call</th><th>FL</th><th>Score</th>
+                    <th>AZ-A</th><th>EL-A</th><th>Off°</th><th>km</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {airscout.aircraft.map((ac, i) => {
-                    const scoreColor = ac.scatter_score >= 0.5 ? "var(--green)" : ac.scatter_score >= 0.25 ? "var(--yellow)" : "var(--text-muted)";
+                  {aircraft.slice(0, 5).map(ac => {
+                    const sc = ac.scatter_score;
+                    const scColor = sc >= 0.5 ? "var(--green)" : sc >= 0.3 ? "var(--yellow)" : "var(--text-muted)";
+                    const isLocked = lockedPlane?.icao24 === ac.icao24;
                     return (
-                      <tr key={ac.icao24} style={{borderBottom:"1px solid var(--border)",background: i===0 ? "rgba(88,166,255,0.06)" : undefined}}>
-                        <td style={{padding:"3px 6px",color:"var(--accent)",fontWeight:i===0?700:400}}>{ac.callsign}</td>
-                        <td style={{padding:"3px 6px",textAlign:"center"}}>{Math.round(ac.altitude_ft/100)}</td>
-                        <td style={{padding:"3px 6px",textAlign:"center",color:scoreColor,fontWeight:600}}>{(ac.scatter_score*100).toFixed(0)}%</td>
-                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.az_a}°</td>
-                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.el_a>0&&ac.el_a<20 ? "var(--green)" : "var(--text-muted)"}}>{ac.el_a}°</td>
-                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.az_b}°</td>
-                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.el_b>0&&ac.el_b<20 ? "var(--green)" : "var(--text-muted)"}}>{ac.el_b}°</td>
-                        <td style={{padding:"3px 6px",textAlign:"center",color: ac.off_path_deg<30?"var(--green)":ac.off_path_deg<60?"var(--yellow)":"var(--text-muted)"}}>{ac.off_path_deg}°</td>
-                        <td style={{padding:"3px 6px",textAlign:"center"}}>{ac.range_a_km}</td>
+                      <tr key={ac.icao24} className={isLocked ? "locked-row" : ""}
+                        style={{ cursor: "pointer" }}
+                        onClick={() => rpc("lock_aircraft", { icao24: ac.icao24 }).catch(() => {})}>
+                        <td style={{ color: isLocked ? "var(--accent)" : "var(--text)", fontWeight: isLocked ? 700 : 400 }}>
+                          {ac.callsign}
+                        </td>
+                        <td>{Math.round(ac.altitude_ft / 100)}</td>
+                        <td style={{ color: scColor, fontWeight: 600 }}>{(sc * 100).toFixed(0)}%</td>
+                        <td>{ac.az_a.toFixed(0)}°</td>
+                        <td style={{ color: ac.el_a > 0 && ac.el_a < 20 ? "var(--green)" : "var(--text-muted)" }}>
+                          {ac.el_a.toFixed(0)}°
+                        </td>
+                        <td style={{ color: ac.off_path_deg < 20 ? "var(--green)" : ac.off_path_deg < 40 ? "var(--yellow)" : "var(--text-muted)" }}>
+                          {ac.off_path_deg.toFixed(0)}°
+                        </td>
+                        <td style={{ color: "var(--text-muted)" }}>{ac.range_a_km}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
-              <div style={{display:"flex",gap:8,marginTop:8}}>
-                <button className="btn-secondary" style={{fontSize:11,padding:"4px 10px"}} onClick={async () => {
-                  try { await rpc("airscout_fetch_now", {}); addLog("Refreshing aircraft…"); }
-                  catch(e) { addLog(`Error: ${e}`); }
-                }}>↻ Refresh</button>
-                <input
-                  placeholder="Override DX locator"
-                  value={locatorB}
-                  onChange={e => setLocatorB(e.target.value.toUpperCase())}
-                  style={{background:"var(--surface)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:4,padding:"2px 6px",width:110,fontFamily:"monospace",fontSize:11}}
-                />
-                <button className="btn-secondary" style={{fontSize:11,padding:"4px 10px"}} onClick={async () => {
-                  try { await rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: locatorB || airscout?.station_b }); }
-                  catch(e) { addLog(`Error: ${e}`); }
-                }}>Set DX</button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Candidates */}
-        {candidates.length > 0 && (
-          <div className="card">
-            <h3>Aircraft Candidates</h3>
-            <ul className="candidates-list">
-              {candidates.map((c) => (
-                <li key={c.aircraft_id}
-                  className={`candidate-item${status?.selected_aircraft_id === c.aircraft_id ? " selected" : ""}`}>
-                  <span style={{ fontWeight: 600 }}>{c.aircraft_id}</span>
-                  <div className="score-bar-wrap">
-                    <div className="score-bar" style={{ width: `${c.total_score * 100}%` }} />
-                  </div>
-                  <span style={{ color: "var(--text-muted)", minWidth: 40 }}>
-                    {(c.total_score * 100).toFixed(0)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
+            )}
           </div>
-        )}
 
-        {/* Decodes */}
-        {decodes.length > 0 && (
-          <div className="card">
-            <h3>WSJT-X Decodes</h3>
-            <div className="log" style={{maxHeight:160}} ref={null}>
-              {decodes.map((d, i) => (
-                <div key={i} className="entry" style={{display:"grid",gridTemplateColumns:"60px 50px 60px 1fr",gap:8,fontFamily:"monospace"}}>
-                  <span style={{color:"var(--text-muted)"}}>{d.ts}</span>
-                  <span style={{color: d.snr >= -10 ? "var(--green)" : d.snr >= -20 ? "var(--yellow)" : "var(--text-muted)"}}>
-                    {d.snr >= 0 ? `+${d.snr}` : d.snr} dB
-                  </span>
-                  <span style={{color:"var(--text-muted)"}}>{d.delta_freq_hz} Hz</span>
-                  <span>{d.message ?? ""}</span>
-                </div>
-              ))}
+          {/* Event log — fills remaining space */}
+          <div className="card flex1">
+            <h3>Log</h3>
+            <div className="log-list" ref={logRef}>
+              {log.length === 0
+                ? <div className="entry">Ready.</div>
+                : [...log].reverse().slice(0, 8).map((e, i) => (
+                  <div key={i} className="entry">{e}</div>
+                ))
+              }
             </div>
           </div>
-        )}
-
-        {/* Log */}
-        <div className="card" style={{ flex: 1 }}>
-          <h3>Event Log</h3>
-          <div className="log" ref={logRef}>
-            {log.length === 0
-              ? <div className="entry" style={{ color: "var(--text-muted)" }}>No events yet — click Begin Session to start.</div>
-              : log.map((e, i) => <div key={i} className="entry">{e}</div>)
-            }
-          </div>
         </div>
-      </main>
+      </div>
+
+      {/* ── Bottom action bar ── */}
+      <footer className="bottombar">
+        <button className="btn-secondary" style={{ fontSize: 12 }} onClick={async () => {
+          addLog("Session ready — waiting for aircraft lock");
+        }} disabled={state !== "idle" && state !== "completed" && state !== "aborted"}>
+          Begin Session
+        </button>
+        <button className="btn-success" onClick={startQso} disabled={state !== "ready"}>
+          ▶ Start QSO
+        </button>
+        <button className="btn-danger" onClick={() => finishQso(true)}
+          disabled={["idle", "completed", "aborted"].includes(state)}>
+          ■ Abort
+        </button>
+        <button className="btn-secondary" onClick={() => finishQso(false)} disabled={state !== "active_qso"}>
+          ✓ Finish QSO
+        </button>
+        <div style={{ width: 1, height: 20, background: "var(--border)", margin: "0 4px" }} />
+        <button
+          style={{
+            fontSize: 11, padding: "4px 10px", borderRadius: 10,
+            border: `1px solid ${autoLock ? "var(--green)" : "var(--border)"}`,
+            background: autoLock ? "rgba(63,185,80,0.1)" : "var(--surface)",
+            color: autoLock ? "var(--green)" : "var(--text-muted)", cursor: "pointer",
+          }}
+          onClick={() => { const v = !autoLock; setAutoLock(v); rpc("auto_lock_set", { enabled: v }).catch(() => {}); }}>
+          {autoLock ? "🔒 Auto-lock" : "🔓 Manual"}
+        </button>
+        <div style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>
+          {dxCallsign && dxGrid && `${wsjtxLive.de_grid ?? "?"} → ${dxGrid}`}
+        </div>
+      </footer>
     </div>
   );
 }
