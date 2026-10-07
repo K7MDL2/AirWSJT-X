@@ -316,7 +316,7 @@ def _start_opensky_feed() -> None:
 
 def _do_lock(icao24: str) -> dict | None:
     """Lock onto a specific aircraft (by icao24). Returns lock info or None."""
-    global _locked_aircraft_id, _lock_score
+    global _locked_aircraft_id, _lock_score, supervisor
     if not _station_a_locator or not _station_b_locator:
         return None
 
@@ -347,7 +347,6 @@ def _do_lock(icao24: str) -> dict | None:
 
     # Re-init supervisor for new session
     from airwsjtx.supervisor import AirWSJTXSupervisor, SupervisorConfig
-    global supervisor
     supervisor = AirWSJTXSupervisor(config=SupervisorConfig(minimum_score_to_lock=0.05))
 
     station_a = Station(
@@ -599,7 +598,6 @@ def _on_wsjtx_status(st: WSJTXStatus) -> None:
         _station_a_locator = st.de_grid
         _start_opensky_feed()
     if st.dx_grid and st.dx_grid != _station_b_locator:
-        global _station_b_locator
         _station_b_locator = st.dx_grid
         _start_opensky_feed()
     _emit({
