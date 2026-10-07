@@ -2,27 +2,37 @@
 """
 JSON-RPC bridge between Tauri and the airwsjtx supervisor.
 Reads newline-delimited JSON from stdin, writes responses to stdout.
+Also runs a background WSJT-X UDP listener and pushes events to stdout.
 """
 from __future__ import annotations
 
 import json
 import sys
+import threading
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
+from airwsjtx.wsjtx_udp import WSJTXListener, WSJTXStatus, WSJTXDecode
 
 supervisor = AirWSJTXSupervisor()
+_stdout_lock = threading.Lock()
+
+
+def _emit(msg: dict) -> None:
+    """Thread-safe write to stdout."""
+    with _stdout_lock:
+        print(json.dumps(msg), flush=True)
 
 
 def _ok(id_: str | None, result: object) -> None:
-    print(json.dumps({"id": id_, "ok": True, "result": result}), flush=True)
+    _emit({"id": id_, "ok": True, "result": result})
 
 
 def _err(id_: str | None, message: str) -> None:
-    print(json.dumps({"id": id_, "ok": False, "error": message}), flush=True)
+    _emit({"id": id_, "ok": False, "error": message})
 
 
 def _parse_tracks(raw: list[dict]) -> list[AircraftTrack]:
@@ -115,7 +125,61 @@ def handle(msg: dict) -> None:
         _err(id_, str(exc))
 
 
+def _on_wsjtx_status(st: WSJTXStatus) -> None:
+    _emit({
+        "event": "wsjtx_status",
+        "data": {
+            "app_id": st.app_id,
+            "freq_hz": st.freq_hz,
+            "freq_mhz": round(st.freq_mhz, 6),
+            "mode": st.mode,
+            "sub_mode": st.sub_mode,
+            "de_call": st.de_call,
+            "de_grid": st.de_grid,
+            "dx_call": st.dx_call,
+            "dx_grid": st.dx_grid,
+            "transmitting": st.transmitting,
+            "decoding": st.decoding,
+            "tx_enabled": st.tx_enabled,
+            "rx_df": st.rx_df,
+            "tx_df": st.tx_df,
+            "tr_period": st.tr_period,
+            "config_name": st.config_name,
+        },
+    })
+
+
+def _on_wsjtx_decode(dec: WSJTXDecode) -> None:
+    _emit({
+        "event": "wsjtx_decode",
+        "data": {
+            "message": dec.message,
+            "snr": dec.snr,
+            "delta_time_s": round(dec.delta_time_s, 1),
+            "delta_freq_hz": dec.delta_freq_hz,
+            "mode": dec.mode,
+            "off_air": dec.off_air,
+        },
+    })
+
+
+def _on_wsjtx_connected(app_id: str) -> None:
+    _emit({"event": "wsjtx_connected", "data": {"app_id": app_id}})
+
+
+def _on_wsjtx_disconnected() -> None:
+    _emit({"event": "wsjtx_disconnected", "data": {}})
+
+
 def main() -> None:
+    listener = WSJTXListener(
+        on_status=_on_wsjtx_status,
+        on_decode=_on_wsjtx_decode,
+        on_connected=_on_wsjtx_connected,
+        on_disconnected=_on_wsjtx_disconnected,
+    )
+    listener.start()
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -126,6 +190,8 @@ def main() -> None:
             _err(None, f"Invalid JSON: {e}")
             continue
         handle(msg)
+
+    listener.stop()
 
 
 if __name__ == "__main__":

@@ -28,6 +28,29 @@ interface TrackingInfo {
   target_azimuth_deg: number;
   target_elevation_deg: number;
 }
+interface WsjtxLive {
+  connected: boolean;
+  app_id: string;
+  freq_mhz: number | null;
+  mode: string | null;
+  sub_mode: string | null;
+  de_call: string | null;
+  de_grid: string | null;
+  dx_call: string | null;
+  transmitting: boolean;
+  decoding: boolean;
+  tr_period: number | null;
+  rx_df: number | null;
+  tx_df: number | null;
+  config_name: string | null;
+}
+interface WsjtxDecodeEntry {
+  message: string | null;
+  snr: number;
+  delta_freq_hz: number;
+  mode: string | null;
+  ts: string;
+}
 
 // ─── Sidecar RPC ──────────────────────────────────────────────────────────────
 
@@ -74,26 +97,77 @@ export default function App() {
   const [log, setLog] = useState<string[]>([]);
   const [currentAz, setCurrentAz] = useState(0);
   const [currentEl, setCurrentEl] = useState(0);
+  const [wsjtxLive, setWsjtxLive] = useState<WsjtxLive>({
+    connected: false, app_id: "", freq_mhz: null, mode: null,
+    sub_mode: null, de_call: null, de_grid: null, dx_call: null,
+    transmitting: false, decoding: false, tr_period: null,
+    rx_df: null, tx_df: null, config_name: null,
+  });
+  const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((msg: string) => {
     setLog((l) => [...l.slice(-49), `${new Date().toLocaleTimeString()} ${msg}`]);
   }, []);
 
-  // Wire sidecar messages to pending RPC resolvers
+  // Wire sidecar messages — handles both RPC responses and push events
   useEffect(() => {
     const unlisten = listen<string>("sidecar-message", (ev) => {
       try {
-        const data = JSON.parse(ev.payload) as { id?: string; ok: boolean; result?: unknown; error?: string };
-        if (data.id && _pending.has(data.id)) {
-          const resolver = _pending.get(data.id)!;
-          _pending.delete(data.id);
-          resolver(data);
+        const data = JSON.parse(ev.payload) as Record<string, unknown>;
+
+        // Push event (no id)
+        if (data.event) {
+          const evt = data.event as string;
+          const evtData = data.data as Record<string, unknown>;
+
+          if (evt === "wsjtx_connected") {
+            addLog(`WSJT-X connected: ${evtData.app_id}`);
+            setWsjtxLive(w => ({ ...w, connected: true, app_id: evtData.app_id as string }));
+          } else if (evt === "wsjtx_disconnected") {
+            addLog("WSJT-X disconnected");
+            setWsjtxLive(w => ({ ...w, connected: false }));
+          } else if (evt === "wsjtx_status") {
+            setWsjtxLive(w => ({
+              ...w,
+              connected: true,
+              freq_mhz: evtData.freq_mhz as number,
+              mode: evtData.mode as string | null,
+              sub_mode: evtData.sub_mode as string | null,
+              de_call: evtData.de_call as string | null,
+              de_grid: evtData.de_grid as string | null,
+              dx_call: evtData.dx_call as string | null,
+              transmitting: evtData.transmitting as boolean,
+              decoding: evtData.decoding as boolean,
+              tr_period: evtData.tr_period as number | null,
+              rx_df: evtData.rx_df as number | null,
+              tx_df: evtData.tx_df as number | null,
+              config_name: evtData.config_name as string | null,
+            }));
+          } else if (evt === "wsjtx_decode") {
+            const entry: WsjtxDecodeEntry = {
+              message: evtData.message as string | null,
+              snr: evtData.snr as number,
+              delta_freq_hz: evtData.delta_freq_hz as number,
+              mode: evtData.mode as string | null,
+              ts: new Date().toLocaleTimeString(),
+            };
+            setDecodes(d => [entry, ...d.slice(0, 49)]);
+            addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
+          }
+          return;
         }
-      } catch { /* ignore non-json */ }
+
+        // RPC response
+        if (data.id && _pending.has(data.id as string)) {
+          const resolver = _pending.get(data.id as string)!;
+          _pending.delete(data.id as string);
+          resolver(data as { ok: boolean; result?: unknown; error?: string });
+        }
+      } catch { /* ignore */ }
     });
     return () => { unlisten.then((f) => f()); };
-  }, []);
+  }, [addLog]);
 
   // Poll status every 2 s once sidecar is ready
   useEffect(() => {
@@ -203,11 +277,21 @@ export default function App() {
 
         {/* WSJT-X status */}
         <div className="card">
-          <h3>WSJT-X</h3>
+          <h3>WSJT-X {wsjtxLive.connected
+            ? <span style={{color:"var(--green)",fontWeight:600}}>● LIVE</span>
+            : <span style={{color:"var(--red)",fontWeight:600}}>○ offline</span>}
+          </h3>
           <div className="wsjtx-status">
-            <div>Mode: <span className={status?.wsjtx?.mode ? "on" : "off"}>{status?.wsjtx?.mode ?? "—"}</span></div>
-            <div>Band: {status?.wsjtx?.band_mhz ? `${status.wsjtx.band_mhz} MHz` : "—"}</div>
-            <div>PTT: <span className={status?.wsjtx?.ptt_enabled ? "on" : "off"}>{status?.wsjtx?.ptt_enabled ? "ON" : "OFF"}</span></div>
+            {wsjtxLive.de_call && <div>Callsign: <span className="on">{wsjtxLive.de_call}</span>{wsjtxLive.de_grid ? ` / ${wsjtxLive.de_grid}` : ""}</div>}
+            <div>Freq: <span className="on">{wsjtxLive.freq_mhz != null ? `${wsjtxLive.freq_mhz.toFixed(3)} MHz` : "—"}</span></div>
+            <div>Mode: {wsjtxLive.mode ?? "—"}{wsjtxLive.sub_mode ? `-${wsjtxLive.sub_mode}` : ""}{wsjtxLive.tr_period ? ` ${wsjtxLive.tr_period}s` : ""}</div>
+            <div>RX: {wsjtxLive.rx_df != null ? `${wsjtxLive.rx_df} Hz` : "—"} &nbsp; TX: {wsjtxLive.tx_df != null ? `${wsjtxLive.tx_df} Hz` : "—"}</div>
+            <div>
+              <span className={wsjtxLive.transmitting ? "on" : "off"}>TX {wsjtxLive.transmitting ? "ON" : "off"}</span>
+              &nbsp;·&nbsp;
+              <span className={wsjtxLive.decoding ? "on" : "off"}>Decoding {wsjtxLive.decoding ? "●" : "○"}</span>
+            </div>
+            {wsjtxLive.dx_call && <div>DX: <span className="on">{wsjtxLive.dx_call}</span></div>}
           </div>
         </div>
 
@@ -298,6 +382,25 @@ export default function App() {
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {/* Decodes */}
+        {decodes.length > 0 && (
+          <div className="card">
+            <h3>WSJT-X Decodes</h3>
+            <div className="log" style={{maxHeight:160}} ref={null}>
+              {decodes.map((d, i) => (
+                <div key={i} className="entry" style={{display:"grid",gridTemplateColumns:"60px 50px 60px 1fr",gap:8,fontFamily:"monospace"}}>
+                  <span style={{color:"var(--text-muted)"}}>{d.ts}</span>
+                  <span style={{color: d.snr >= -10 ? "var(--green)" : d.snr >= -20 ? "var(--yellow)" : "var(--text-muted)"}}>
+                    {d.snr >= 0 ? `+${d.snr}` : d.snr} dB
+                  </span>
+                  <span style={{color:"var(--text-muted)"}}>{d.delta_freq_hz} Hz</span>
+                  <span>{d.message ?? ""}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
