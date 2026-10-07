@@ -67,6 +67,8 @@ class SupervisorTests(unittest.TestCase):
         self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
         self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
         self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
+        self.supervisor.update_tracking(current_azimuth_deg=102, current_elevation_deg=18)
         self.assertEqual(self.supervisor.session.state, SessionState.READY)
 
         self.supervisor.operator_start_qso()
@@ -118,6 +120,8 @@ class SupervisorTests(unittest.TestCase):
 
         self.supervisor.finish_qso(abort=True)
         self.assertEqual(self.supervisor.session.state, SessionState.ABORTED)
+        with self.assertRaises(ValueError):
+            self.supervisor.finish_qso(abort=True)
 
     def test_rotator_lock_counter_resets_per_session(self) -> None:
         self.supervisor.begin_session(

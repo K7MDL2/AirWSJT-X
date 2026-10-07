@@ -81,6 +81,7 @@ class AirWSJTXSupervisor:
         )
         if self._track_cursor < len(self._selected_track.samples) - 1:
             self._track_cursor += 1
+            self.rotator.reset()
         self.session.update_tracking(rotator_locked=locked)
         return command
 
@@ -90,6 +91,8 @@ class AirWSJTXSupervisor:
 
     def finish_qso(self, abort: bool = False) -> None:
         if abort:
+            if self.session.state in (SessionState.COMPLETED, SessionState.ABORTED):
+                raise ValueError("Cannot abort a terminal session.")
             if self.session.state == SessionState.ACTIVE_QSO:
                 self.wsjtx.set_ptt(False)
             self.session.abort()
