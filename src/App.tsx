@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
+import RotatorPanel from "./RotatorPanel";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -22,11 +23,6 @@ interface Candidate {
   geometry_score: number;
   stability_score: number;
   total_score: number;
-}
-interface TrackingInfo {
-  state: string;
-  target_azimuth_deg: number;
-  target_elevation_deg: number;
 }
 interface WsjtxLive {
   connected: boolean;
@@ -116,10 +112,7 @@ const DEMO_TRACKS = [
 export default function App() {
   const [status, setStatus] = useState<SessionStatus | null>(null);
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [tracking, setTracking] = useState<TrackingInfo | null>(null);
   const [log, setLog] = useState<string[]>([]);
-  const [currentAz, setCurrentAz] = useState(0);
-  const [currentEl, setCurrentEl] = useState(0);
   const [wsjtxLive, setWsjtxLive] = useState<WsjtxLive>({
     connected: false, app_id: "", freq_mhz: null, mode: null,
     sub_mode: null, de_call: null, de_grid: null, dx_call: null,
@@ -129,6 +122,11 @@ export default function App() {
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
   const [locatorB, setLocatorB] = useState("");
+  const [rotatorConnected, setRotatorConnected] = useState(false);
+  const [rotatorAz, setRotatorAz] = useState(0);
+  const [rotatorEl, setRotatorEl] = useState(0);
+  const [rotatorTargetAz, setRotatorTargetAz] = useState<number | null>(null);
+  const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
 
   const addLog = useCallback((msg: string) => {
@@ -185,6 +183,17 @@ export default function App() {
             addLog(`AirScout feed started: ${evtData.source}`);
           } else if (evt === "airscout_error") {
             addLog(`AirScout error (${evtData.source}): ${evtData.message}`);
+          } else if (evt === "rotator_position") {
+            setRotatorAz(evtData.azimuth as number);
+            setRotatorEl(evtData.elevation as number);
+          } else if (evt === "rotator_connected") {
+            setRotatorConnected(true);
+            addLog(`Rotator connected (${evtData.host}:${evtData.port})`);
+          } else if (evt === "rotator_disconnected") {
+            setRotatorConnected(false);
+            addLog("Rotator disconnected");
+          } else if (evt === "rotator_error") {
+            addLog(`Rotator: ${evtData.message}`);
           }
           return;
         }
@@ -232,18 +241,6 @@ export default function App() {
     } catch (e) { addLog(`Error: ${e}`); }
   }
 
-  async function sendTracking() {
-    try {
-      const t = await rpc("update_tracking", {
-        current_azimuth_deg: currentAz,
-        current_elevation_deg: currentEl,
-      }) as TrackingInfo;
-      setTracking(t);
-      setStatus((s) => s ? { ...s, state: t.state } : s);
-      addLog(`Tracking → az=${t.target_azimuth_deg}° el=${t.target_elevation_deg}° state=${t.state}`);
-    } catch (e) { addLog(`Error: ${e}`); }
-  }
-
   async function startQso() {
     try {
       const r = await rpc("start_qso") as { state: string };
@@ -262,7 +259,6 @@ export default function App() {
 
   const state = status?.state ?? "idle";
   const stateColor = STATE_COLOR[state] ?? "#8b949e";
-  const azDeg = tracking?.target_azimuth_deg ?? 0;
 
   return (
     <div className="app">
@@ -348,51 +344,24 @@ export default function App() {
 
       {/* Main */}
       <main className="main">
-        {/* Rotator */}
+        {/* Rotator — PST Rotator style */}
         <div className="card">
           <h3>Rotator</h3>
-          <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
-            <div className="rotator-gauge">
-              <div className="compass">
-                {tracking && (
-                  <div
-                    className="compass-target"
-                    style={{ transform: `translateX(-50%) rotate(${azDeg}deg)`, left: "50%" }}
-                  />
-                )}
-                <div
-                  className="compass-needle"
-                  style={{ transform: `translateX(-50%) rotate(${currentAz}deg)`, left: "50%" }}
-                />
-              </div>
-              <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                AZ {currentAz}° → {azDeg}°
-              </div>
-            </div>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 6 }}>
-                Elevation {currentEl}° → {tracking?.target_elevation_deg ?? 0}°
-              </div>
-              <div className="elevation-bar">
-                <div className="elevation-fill" style={{ width: `${(currentEl / 90) * 100}%` }} />
-              </div>
-              <div style={{ marginTop: 12, display: "flex", gap: 8, flexWrap: "wrap" }}>
-                <label style={{ fontSize: 12 }}>
-                  Current AZ&nbsp;
-                  <input type="number" value={currentAz} onChange={(e) => setCurrentAz(+e.target.value)}
-                    style={{ width: 64, background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px" }} />
-                </label>
-                <label style={{ fontSize: 12 }}>
-                  Current EL&nbsp;
-                  <input type="number" value={currentEl} onChange={(e) => setCurrentEl(+e.target.value)}
-                    style={{ width: 64, background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px" }} />
-                </label>
-                <button className="btn-secondary" onClick={sendTracking} disabled={!["plane_locked","tracking","ready"].includes(state)}>
-                  Update
-                </button>
-              </div>
-            </div>
-          </div>
+          <RotatorPanel
+            currentAz={rotatorAz}
+            currentEl={rotatorEl}
+            targetAz={rotatorTargetAz}
+            targetEl={rotatorTargetEl}
+            connected={rotatorConnected}
+            onSetPosition={(az, el) => {
+              setRotatorTargetAz(az);
+              setRotatorTargetEl(el);
+              rpc("rotator_set", { azimuth: az, elevation: el }).catch(e => addLog(`Rotator: ${e}`));
+            }}
+            onStop={() => rpc("rotator_stop", {}).catch(e => addLog(`Rotator: ${e}`))}
+            onPark={() => { setRotatorTargetAz(0); setRotatorTargetEl(0); rpc("rotator_park", {}).catch(e => addLog(`Rotator: ${e}`)); }}
+            onConnect={(host, port) => rpc("rotator_connect", { host, port }).catch(e => addLog(`Rotator: ${e}`))}
+          />
         </div>
 
         {/* AirScout aircraft scatter table */}

@@ -16,6 +16,7 @@ sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 from airwsjtx.airscout import Aircraft, Dump1090Feed, OpenSkyFeed
 from airwsjtx.geo import locator_to_latlon, scatter_geometry
+from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
 from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXStatus
@@ -32,6 +33,9 @@ _dump1090_feed: Dump1090Feed | None = None
 # Station locators (updated from WSJT-X or RPC)
 _station_a_locator: str | None = None
 _station_b_locator: str | None = None
+
+# Hamlib rotator
+_rotator: HamlibRotator | None = None
 
 
 def _emit(msg: dict) -> None:
@@ -165,6 +169,41 @@ def handle(msg: dict) -> None:
             except Exception as e:
                 _err(id_, str(e))
 
+        # ── Rotator methods ───────────────────────────────────────────────────
+
+        elif method == "rotator_connect":
+            host = params.get("host", "127.0.0.1")
+            port = int(params.get("port", 4533))
+            _start_rotator(host, port)
+            _ok(id_, {"host": host, "port": port})
+
+        elif method == "rotator_set":
+            if not _rotator or not _rotator.connected:
+                _err(id_, "Rotator not connected")
+            else:
+                az = float(params["azimuth"])
+                el = float(params.get("elevation", 0.0))
+                _rotator.set_position(az, el)
+                _ok(id_, {"azimuth": az, "elevation": el})
+
+        elif method == "rotator_stop":
+            if _rotator:
+                _rotator.stop_rotation()
+            _ok(id_, {})
+
+        elif method == "rotator_park":
+            if _rotator:
+                _rotator.park()
+            _ok(id_, {})
+
+        elif method == "rotator_status":
+            pos = _rotator.current_position if _rotator else None
+            _ok(id_, {
+                "connected": bool(_rotator and _rotator.connected),
+                "azimuth": pos.azimuth if pos else None,
+                "elevation": pos.elevation if pos else None,
+            })
+
         else:
             _err(id_, f"Unknown method: {method}")
 
@@ -221,6 +260,28 @@ def _start_opensky_feed() -> None:
     )
     _opensky_feed.start()
     _emit({"event": "airscout_feed_started", "data": {"source": "opensky", "bbox": list(bbox)}})
+
+
+def _start_rotator(host: str, port: int) -> None:
+    global _rotator
+    if _rotator:
+        _rotator.stop()
+
+    def _on_pos(pos: RotatorPosition) -> None:
+        _emit({"event": "rotator_position", "data": {
+            "azimuth": round(pos.azimuth, 1),
+            "elevation": round(pos.elevation, 1),
+        }})
+
+    _rotator = HamlibRotator(
+        host=host, port=port,
+        poll_interval_s=0.5,
+        on_position=_on_pos,
+        on_connected=lambda: _emit({"event": "rotator_connected", "data": {"host": host, "port": port}}),
+        on_disconnected=lambda: _emit({"event": "rotator_disconnected", "data": {}}),
+        on_error=lambda msg: _emit({"event": "rotator_error", "data": {"message": msg}}),
+    )
+    _rotator.start()
 
 
 def _start_dump1090_feed(host: str, port: int) -> None:
@@ -379,6 +440,12 @@ def main() -> None:
         handle(msg)
 
     listener.stop()
+    if _rotator:
+        _rotator.stop()
+    if _opensky_feed:
+        _opensky_feed.stop()
+    if _dump1090_feed:
+        _dump1090_feed.stop()
 
 
 if __name__ == "__main__":
