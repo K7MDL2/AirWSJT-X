@@ -81,6 +81,13 @@ const STATE_COLOR: Record<string, string> = {
   aborted: "#f85149",
 };
 
+const PORTABLE_GRID_OVERRIDES_KEY = "airwsjtx.portableGridOverrides";
+
+function normalizeGrid(grid: string | null | undefined): string | null {
+  const normalized = (grid ?? "").trim().toUpperCase();
+  return normalized.length > 0 ? normalized : null;
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -101,6 +108,22 @@ export default function App() {
   const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
   const [dxCallsign, setDxCallsign] = useState<string | null>(null);
   const [dxGrid, setDxGrid] = useState<string | null>(null);
+  const [stationGridOverrides, setStationGridOverrides] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem(PORTABLE_GRID_OVERRIDES_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as Record<string, string>;
+      return Object.fromEntries(
+        Object.entries(parsed)
+          .map(([call, grid]) => [call.trim().toUpperCase(), normalizeGrid(grid)])
+          .filter((entry): entry is [string, string] => Boolean(entry[1])),
+      );
+    } catch {
+      return {};
+    }
+  });
+  const [myGridInput, setMyGridInput] = useState("");
+  const [dxGridInput, setDxGridInput] = useState("");
   const [autoLock, setAutoLock] = useState(true);
   const [lockedPlane, setLockedPlane] = useState<{
     icao24: string; callsign: string; altitude_ft: number;
@@ -244,6 +267,26 @@ export default function App() {
   const state = status?.state ?? "idle";
   const stateColor = STATE_COLOR[state] ?? "#8b949e";
   const aircraft = airscout?.aircraft ?? [];
+  const myCallsign = wsjtxLive.de_call?.trim().toUpperCase() ?? null;
+  const dxCall = dxCallsign?.trim().toUpperCase() ?? null;
+  const myGrid = (myCallsign ? stationGridOverrides[myCallsign] : null) ?? wsjtxLive.de_grid;
+  const selectedDxGrid = (dxCall ? stationGridOverrides[dxCall] : null) ?? dxGrid;
+
+  useEffect(() => { setMyGridInput(myGrid ?? ""); }, [myGrid]);
+  useEffect(() => { setDxGridInput(selectedDxGrid ?? ""); }, [selectedDxGrid]);
+
+  function savePortableGrid(callsign: string | null, grid: string | null) {
+    if (!callsign) return;
+    const call = callsign.trim().toUpperCase();
+    if (!call) return;
+    setStationGridOverrides(prev => {
+      const next = { ...prev };
+      if (grid) next[call] = grid;
+      else delete next[call];
+      localStorage.setItem(PORTABLE_GRID_OVERRIDES_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
 
   return (
     <div className="app">
@@ -313,14 +356,74 @@ export default function App() {
             <div className="station-compact">
               <div className="station-pill" style={{ borderColor: "#58a6ff44" }}>
                 <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 1 }}>MY</div>
-                <div className="call" style={{ color: "var(--accent)" }}>{wsjtxLive.de_call ?? "—"}</div>
-                <div className="grid">{wsjtxLive.de_grid ?? "—"}</div>
+                <div className="call" style={{ color: "var(--accent)" }}>{myCallsign ?? "—"}</div>
+                <div className="grid">{myGrid ?? "—"}</div>
               </div>
               <div style={{ color: "var(--border)", fontSize: 16 }}>→</div>
               <div className="station-pill" style={{ borderColor: "#3fb95044" }}>
                 <div style={{ fontSize: 9, color: "var(--text-muted)", marginBottom: 1 }}>DX</div>
-                <div className="call" style={{ color: "var(--green)" }}>{dxCallsign ?? "—"}</div>
-                <div className="grid">{dxGrid ?? "—"}</div>
+                <div className="call" style={{ color: "var(--green)" }}>{dxCall ?? "—"}</div>
+                <div className="grid">{selectedDxGrid ?? "—"}</div>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 4, marginTop: 6 }}>
+              <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: "var(--text-muted)", minWidth: 22 }}>MY</span>
+                <input
+                  value={myGridInput}
+                  onChange={(e) => setMyGridInput(e.target.value.toUpperCase())}
+                  placeholder={wsjtxLive.de_grid ?? "Grid"}
+                  style={{
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    width: 86,
+                    fontFamily: "monospace",
+                  }}
+                />
+                <button className="btn-secondary" style={{ fontSize: 10, padding: "2px 8px" }}
+                  onClick={() => {
+                    const grid = normalizeGrid(myGridInput);
+                    savePortableGrid(myCallsign, grid);
+                    rpc("airscout_set_stations", { locator_a: grid ?? wsjtxLive.de_grid, locator_b: selectedDxGrid }).catch(() => {});
+                    addLog(`MY grid ${grid ? `override → ${grid}` : "reset to WSJT-X"}`);
+                  }}>
+                  Apply
+                </button>
+              </div>
+              <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "wrap" }}>
+                <span style={{ fontSize: 10, color: "var(--text-muted)", minWidth: 22 }}>DX</span>
+                <input
+                  value={dxGridInput}
+                  onChange={(e) => setDxGridInput(e.target.value.toUpperCase())}
+                  placeholder={dxGrid ?? "Grid"}
+                  style={{
+                    background: "var(--surface)",
+                    color: "var(--text)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    padding: "2px 6px",
+                    fontSize: 11,
+                    width: 86,
+                    fontFamily: "monospace",
+                  }}
+                />
+                <button className="btn-secondary" style={{ fontSize: 10, padding: "2px 8px" }}
+                  onClick={() => {
+                    if (!dxCall) {
+                      addLog("Set DX callsign before applying DX grid");
+                      return;
+                    }
+                    const grid = normalizeGrid(dxGridInput);
+                    savePortableGrid(dxCall, grid);
+                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: grid ?? dxGrid }).catch(() => {});
+                    addLog(`DX grid ${grid ? `override → ${grid}` : "reset to callbook"}`);
+                  }}>
+                  Apply
+                </button>
               </div>
             </div>
             {/* Quick-select */}
@@ -328,13 +431,14 @@ export default function App() {
               {[{ call: "VE7NX", grid: "CN89oh" }, { call: "W7PUA", grid: "CN84jq" }].map(s => (
                 <button key={s.call} className="btn-secondary"
                   style={{ fontSize: 10, padding: "3px 8px",
-                    border: dxCallsign === s.call ? "1px solid var(--green)" : undefined,
-                    color: dxCallsign === s.call ? "var(--green)" : undefined }}
+                    border: dxCall === s.call ? "1px solid var(--green)" : undefined,
+                    color: dxCall === s.call ? "var(--green)" : undefined }}
                   onClick={() => {
-                    setDxCallsign(s.call); setDxGrid(s.grid);
-                    rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: s.call }).catch(() => {});
-                    rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: s.grid }).catch(() => {});
-                    addLog(`DX → ${s.call} ${s.grid}`);
+                    setDxCallsign(s.call); setDxGrid(s.grid.toUpperCase());
+                    const dxLocator = stationGridOverrides[s.call] ?? s.grid.toUpperCase();
+                    rpc("set_station_calls", { call_a: myCallsign, call_b: s.call }).catch(() => {});
+                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                    addLog(`DX → ${s.call} ${dxLocator}`);
                   }}>
                   {s.call}
                 </button>
@@ -344,14 +448,18 @@ export default function App() {
                   const call = prompt("DX callsign:");
                   if (!call) return;
                   const info = await rpc("callsign_lookup", { callsign: call }) as { callsign: string; grid: string | null; name: string | null };
-                  if (info.grid) {
-                    setDxCallsign(info.callsign); setDxGrid(info.grid);
-                    rpc("set_station_calls", { call_a: wsjtxLive.de_call, call_b: info.callsign }).catch(() => {});
-                    rpc("airscout_set_stations", { locator_a: wsjtxLive.de_grid, locator_b: info.grid }).catch(() => {});
-                    addLog(`DX → ${info.callsign} ${info.grid}${info.name ? ` (${info.name})` : ""}`);
-                  } else {
-                    addLog(`Lookup: ${call} not found`);
-                  }
+                  const nextCall = info.callsign.trim().toUpperCase();
+                  const lookedUpGrid = normalizeGrid(info.grid);
+                  const dxLocator = stationGridOverrides[nextCall] ?? lookedUpGrid;
+                  setDxCallsign(nextCall);
+                  setDxGrid(lookedUpGrid);
+                  rpc("set_station_calls", { call_a: myCallsign, call_b: nextCall }).catch(() => {});
+                  rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                  addLog(
+                    dxLocator
+                      ? `DX → ${nextCall} ${dxLocator}${info.name ? ` (${info.name})` : ""}`
+                      : `DX → ${nextCall} (enter portable grid manually)`,
+                  );
                 }}>
                 + Other
               </button>
@@ -521,7 +629,7 @@ export default function App() {
           {autoLock ? "🔒 Auto-lock" : "🔓 Manual"}
         </button>
         <div style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>
-          {dxCallsign && dxGrid && `${wsjtxLive.de_grid ?? "?"} → ${dxGrid}`}
+          {dxCall && selectedDxGrid && `${myGrid ?? "?"} → ${selectedDxGrid}`}
         </div>
       </footer>
     </div>
