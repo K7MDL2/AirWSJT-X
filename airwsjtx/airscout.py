@@ -61,16 +61,20 @@ class OpenSkyFeed:
         lat_max: float,
         lon_max: float,
         interval_s: float = 30.0,
+        max_backoff_s: float = 300.0,
         on_update: Callable[[list[Aircraft]], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        on_rate_limited: Callable[[float], None] | None = None,
     ) -> None:
         self.lat_min = lat_min
         self.lon_min = lon_min
         self.lat_max = lat_max
         self.lon_max = lon_max
         self.interval_s = interval_s
+        self.max_backoff_s = max_backoff_s
         self.on_update = on_update
         self.on_error = on_error
+        self.on_rate_limited = on_rate_limited
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -127,15 +131,30 @@ class OpenSkyFeed:
         return aircraft
 
     def _run(self) -> None:
+        consecutive_429 = 0
         while not self._stop.is_set():
+            wait_s = self.interval_s
             try:
                 aircraft = self.fetch_once()
+                consecutive_429 = 0
                 if self.on_update:
                     self.on_update(aircraft)
+            except urllib.error.HTTPError as e:
+                if e.code == 429:
+                    consecutive_429 += 1
+                    base_delay = max(self.interval_s, 10.0)
+                    wait_s = min(base_delay * (2 ** (consecutive_429 - 1)), self.max_backoff_s)
+                    if self.on_rate_limited:
+                        self.on_rate_limited(wait_s)
+                else:
+                    consecutive_429 = 0
+                    if self.on_error:
+                        self.on_error(f"HTTP Error {e.code}: {e.reason}")
             except Exception as e:
+                consecutive_429 = 0
                 if self.on_error:
                     self.on_error(str(e))
-            self._stop.wait(self.interval_s)
+            self._stop.wait(wait_s)
 
 
 # ─── dump1090 SBS (port 30003) feed ──────────────────────────────────────────

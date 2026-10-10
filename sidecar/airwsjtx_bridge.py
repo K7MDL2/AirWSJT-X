@@ -31,6 +31,18 @@ _aircraft_lock = threading.Lock()
 _aircraft_cache: list[Aircraft] = []
 _opensky_feed: OpenSkyFeed | None = None
 _dump1090_feed: Dump1090Feed | None = None
+_dump1090_host: str = "127.0.0.1"
+_dump1090_port: int = 30003
+_supported_sources = ("opensky", "dump1090")
+_source_priority: list[str] = ["opensky", "dump1090"]
+_source_priority_lock = threading.Lock()
+_source_status_lock = threading.Lock()
+_source_status: dict[str, dict[str, str | None]] = {
+    "opensky": {"state": "stopped", "message": None},
+    "dump1090": {"state": "stopped", "message": None},
+}
+_active_source: str | None = None
+_opensky_rate_limit_count = 0
 
 # Station locators (updated from WSJT-X or RPC)
 _station_a_locator: str | None = None
@@ -48,6 +60,46 @@ _lock_score: float = 0.0
 _wsjtx_freq_hz: int | None = None
 _wsjtx_band_mhz: float | None = None
 _wsjtx_listener: WSJTXListener | None = None
+
+
+def _set_source_status(source: str, state: str, message: str | None = None) -> None:
+    if source not in _source_status:
+        return
+    with _source_status_lock:
+        _source_status[source] = {"state": state, "message": message}
+    _emit_source_status()
+
+
+def _emit_source_status() -> None:
+    with _source_priority_lock:
+        priority = list(_source_priority)
+    with _source_status_lock:
+        active_source = _active_source
+        sources = {k: dict(v) for k, v in _source_status.items()}
+    _emit({
+        "event": "airscout_source_status",
+        "data": {
+            "active_source": active_source,
+            "priority": priority,
+            "sources": sources,
+        },
+    })
+
+
+def _normalize_sources(raw_sources: object) -> list[str]:
+    if not isinstance(raw_sources, list):
+        with _source_priority_lock:
+            return list(_source_priority)
+    normalized = []
+    for src in raw_sources:
+        if isinstance(src, str):
+            src_norm = src.strip().lower()
+            if src_norm in _supported_sources and src_norm not in normalized:
+                normalized.append(src_norm)
+    if normalized:
+        return normalized
+    with _source_priority_lock:
+        return list(_source_priority)
 
 
 def _emit(msg: dict) -> None:
@@ -153,14 +205,46 @@ def handle(msg: dict) -> None:
             global _station_a_locator, _station_b_locator
             _station_a_locator = params.get("locator_a")
             _station_b_locator = params.get("locator_b")
-            _start_opensky_feed()
+            _start_configured_airscout_feed(force_restart=True)
             _ok(id_, {"locator_a": _station_a_locator, "locator_b": _station_b_locator})
 
         elif method == "airscout_start_dump1090":
+            global _dump1090_host, _dump1090_port
             host = params.get("host", "127.0.0.1")
             port = int(params.get("port", 30003))
+            _dump1090_host = host
+            _dump1090_port = port
             _start_dump1090_feed(host, port)
             _ok(id_, {"host": host, "port": port})
+
+        elif method == "airscout_set_sources":
+            global _source_priority
+            next_priority = _normalize_sources(params.get("sources"))
+            with _source_priority_lock:
+                _source_priority = next_priority
+            _start_configured_airscout_feed(force_restart=True)
+            with _source_priority_lock:
+                priority = list(_source_priority)
+            with _source_status_lock:
+                active_source = _active_source
+                sources = {k: dict(v) for k, v in _source_status.items()}
+            _ok(id_, {
+                "active_source": active_source,
+                "priority": priority,
+                "sources": sources,
+            })
+
+        elif method == "airscout_get_sources":
+            with _source_priority_lock:
+                priority = list(_source_priority)
+            with _source_status_lock:
+                active_source = _active_source
+                sources = {k: dict(v) for k, v in _source_status.items()}
+            _ok(id_, {
+                "active_source": active_source,
+                "priority": priority,
+                "sources": sources,
+            })
 
         elif method == "airscout_get_aircraft":
             result = _get_scatter_aircraft()
@@ -169,15 +253,20 @@ def handle(msg: dict) -> None:
         elif method == "airscout_fetch_now":
             # Force an immediate OpenSky fetch
             try:
-                if _opensky_feed:
+                if _active_source == "opensky" and _opensky_feed:
                     aircraft = _opensky_feed.fetch_once()
                     with _aircraft_lock:
                         _aircraft_cache.clear()
                         _aircraft_cache.extend(aircraft)
                     _emit_aircraft_update()
                     _ok(id_, {"count": len(aircraft)})
+                elif _active_source == "dump1090":
+                    with _aircraft_lock:
+                        count = len(_aircraft_cache)
+                    _emit_aircraft_update()
+                    _ok(id_, {"count": count})
                 else:
-                    _err(id_, "No OpenSky feed configured — call airscout_set_stations first")
+                    _err(id_, "No active aircraft source — call airscout_set_stations first")
             except Exception as e:
                 _err(id_, str(e))
 
@@ -280,6 +369,93 @@ def handle(msg: dict) -> None:
 
 # ─── AirScout feed helpers ────────────────────────────────────────────────────
 
+def _stop_source(source: str) -> None:
+    global _opensky_feed, _dump1090_feed
+    if source == "opensky":
+        if _opensky_feed:
+            _opensky_feed.stop()
+            _opensky_feed = None
+        _set_source_status("opensky", "stopped")
+    elif source == "dump1090":
+        if _dump1090_feed:
+            _dump1090_feed.stop()
+            _dump1090_feed = None
+        _set_source_status("dump1090", "stopped")
+
+
+def _start_source(source: str) -> bool:
+    global _active_source
+    if source == "opensky":
+        _start_opensky_feed()
+        return _opensky_feed is not None
+    if source == "dump1090":
+        _start_dump1090_feed(_dump1090_host, _dump1090_port)
+        with _source_status_lock:
+            _active_source = "dump1090"
+        return True
+    return False
+
+
+def _start_configured_airscout_feed(force_restart: bool = False) -> None:
+    global _active_source
+    with _source_status_lock:
+        active_source = _active_source
+    if active_source and not force_restart:
+        return
+    if force_restart and active_source:
+        _stop_source(active_source)
+        with _source_status_lock:
+            _active_source = None
+    with _source_priority_lock:
+        priority = list(_source_priority)
+    for source in priority:
+        if _start_source(source):
+            with _source_status_lock:
+                _active_source = source
+            _emit_source_status()
+            return
+    with _source_status_lock:
+        _active_source = None
+    _emit_source_status()
+
+
+def _next_fallback_source(failed_source: str) -> str | None:
+    with _source_priority_lock:
+        priority = list(_source_priority)
+    if failed_source not in priority:
+        return None
+    if len(priority) <= 1:
+        return None
+    idx = priority.index(failed_source)
+    return priority[(idx + 1) % len(priority)]
+
+
+def _try_fallback(failed_source: str, reason: str) -> None:
+    global _active_source
+    with _source_status_lock:
+        active_source = _active_source
+    if failed_source != active_source:
+        return
+    fallback = _next_fallback_source(failed_source)
+    if not fallback:
+        _set_source_status(failed_source, "error", reason)
+        return
+    _stop_source(failed_source)
+    _emit({"event": "airscout_source_switched", "data": {
+        "from": failed_source,
+        "to": fallback,
+        "reason": reason,
+    }})
+    with _source_status_lock:
+        _active_source = None
+    if not _start_source(fallback):
+        _set_source_status(fallback, "error", "Failed to start fallback source")
+        return
+    with _source_status_lock:
+        _active_source = fallback
+    _emit_source_status()
+
+
 def _bbox_for_locators() -> tuple[float, float, float, float] | None:
     """Compute a bounding box covering both stations + 400 km margin."""
     if not _station_a_locator:
@@ -301,29 +477,52 @@ def _bbox_for_locators() -> tuple[float, float, float, float] | None:
 
 
 def _start_opensky_feed() -> None:
-    global _opensky_feed
+    global _opensky_feed, _active_source, _opensky_rate_limit_count
     bbox = _bbox_for_locators()
     if not bbox:
+        _set_source_status("opensky", "error", "Missing/invalid station locator")
         return
     if _opensky_feed:
         _opensky_feed.stop()
+        _opensky_feed = None
 
     def _on_update(aircraft: list[Aircraft]) -> None:
+        global _opensky_rate_limit_count
+        with _source_status_lock:
+            _opensky_rate_limit_count = 0
+        _set_source_status("opensky", "connected")
         with _aircraft_lock:
             _aircraft_cache.clear()
             _aircraft_cache.extend(aircraft)
         _emit_aircraft_update()
 
+    def _on_rate_limited(wait_s: float) -> None:
+        global _opensky_rate_limit_count
+        with _source_status_lock:
+            _opensky_rate_limit_count += 1
+            rate_limit_count = _opensky_rate_limit_count
+        _set_source_status("opensky", "backoff", f"Rate limited; retrying in {int(wait_s)}s")
+        _emit({"event": "airscout_error", "data": {"source": "opensky", "message": f"HTTP Error 429: OpenSky rate limit; retrying in {int(wait_s)}s"}})
+        if rate_limit_count >= 2:
+            _try_fallback("opensky", "OpenSky rate limited repeatedly (HTTP 429)")
+
     def _on_error(msg: str) -> None:
+        _set_source_status("opensky", "error", msg)
         _emit({"event": "airscout_error", "data": {"source": "opensky", "message": msg}})
+        _try_fallback("opensky", msg)
 
     lat_min, lon_min, lat_max, lon_max = bbox
+    with _source_status_lock:
+        _opensky_rate_limit_count = 0
+        _active_source = "opensky"
+    _set_source_status("opensky", "connecting")
     _opensky_feed = OpenSkyFeed(
         lat_min=lat_min, lon_min=lon_min,
         lat_max=lat_max, lon_max=lon_max,
         interval_s=30.0,
         on_update=_on_update,
         on_error=_on_error,
+        on_rate_limited=_on_rate_limited,
     )
     _opensky_feed.start()
     _emit({"event": "airscout_feed_started", "data": {"source": "opensky", "bbox": list(bbox)}})
@@ -518,22 +717,44 @@ def _start_rotator(host: str, port: int) -> None:
 
 
 def _start_dump1090_feed(host: str, port: int) -> None:
-    global _dump1090_feed
+    global _dump1090_feed, _active_source
     if _dump1090_feed:
         _dump1090_feed.stop()
+        _dump1090_feed = None
 
     def _on_update(aircraft: list[Aircraft]) -> None:
+        _set_source_status("dump1090", "connected")
         with _aircraft_lock:
             _aircraft_cache.clear()
             _aircraft_cache.extend(aircraft)
         _emit_aircraft_update()
 
+    def _on_connected() -> None:
+        global _active_source
+        with _source_status_lock:
+            _active_source = "dump1090"
+        _set_source_status("dump1090", "connected")
+        _emit({"event": "airscout_feed_started", "data": {"source": "dump1090"}})
+
+    def _on_disconnected() -> None:
+        _set_source_status("dump1090", "disconnected")
+        _emit({"event": "airscout_feed_stopped", "data": {"source": "dump1090"}})
+        _try_fallback("dump1090", "dump1090 disconnected")
+
+    def _on_error(msg: str) -> None:
+        _set_source_status("dump1090", "error", msg)
+        _emit({"event": "airscout_error", "data": {"source": "dump1090", "message": msg}})
+        _try_fallback("dump1090", msg)
+
+    with _source_status_lock:
+        _active_source = "dump1090"
+    _set_source_status("dump1090", "connecting")
     _dump1090_feed = Dump1090Feed(
         host=host, port=port,
         on_update=_on_update,
-        on_connected=lambda: _emit({"event": "airscout_feed_started", "data": {"source": "dump1090"}}),
-        on_disconnected=lambda: _emit({"event": "airscout_feed_stopped", "data": {"source": "dump1090"}}),
-        on_error=lambda msg: _emit({"event": "airscout_error", "data": {"source": "dump1090", "message": msg}}),
+        on_connected=_on_connected,
+        on_disconnected=_on_disconnected,
+        on_error=_on_error,
     )
     _dump1090_feed.start()
 
@@ -584,6 +805,8 @@ def _get_scatter_aircraft() -> list[dict]:
 
 def _emit_aircraft_update() -> None:
     aircraft = _get_scatter_aircraft()
+    with _source_status_lock:
+        active_source = _active_source
     _emit({
         "event": "airscout_update",
         "data": {
@@ -591,6 +814,7 @@ def _emit_aircraft_update() -> None:
             "total": len(aircraft),
             "station_a": _station_a_locator,
             "station_b": _station_b_locator,
+            "active_source": active_source,
         },
     })
     # Update tracking or try auto-lock
@@ -613,10 +837,20 @@ def _on_wsjtx_status(st: WSJTXStatus) -> None:
         _station_a_call = st.de_call
     if st.de_grid and st.de_grid != _station_a_locator:
         _station_a_locator = st.de_grid
-        _start_opensky_feed()
+        with _source_status_lock:
+            active_source = _active_source
+        if active_source == "opensky":
+            _start_opensky_feed()
+        else:
+            _start_configured_airscout_feed()
     if st.dx_grid and st.dx_grid != _station_b_locator:
         _station_b_locator = st.dx_grid
-        _start_opensky_feed()
+        with _source_status_lock:
+            active_source = _active_source
+        if active_source == "opensky":
+            _start_opensky_feed()
+        else:
+            _start_configured_airscout_feed()
     _emit({
         "event": "wsjtx_status",
         "data": {
@@ -664,6 +898,7 @@ def _on_wsjtx_disconnected() -> None:
 
 def main() -> None:
     global _wsjtx_listener
+    _emit_source_status()
     listener = WSJTXListener(
         on_status=_on_wsjtx_status,
         on_decode=_on_wsjtx_decode,
