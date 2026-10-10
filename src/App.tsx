@@ -124,6 +124,8 @@ export default function App() {
   });
   const [myGridInput, setMyGridInput] = useState("");
   const [dxGridInput, setDxGridInput] = useState("");
+  const [myGridEditing, setMyGridEditing] = useState(false);
+  const [dxGridEditing, setDxGridEditing] = useState(false);
   const [autoLock, setAutoLock] = useState(true);
   const [lockedPlane, setLockedPlane] = useState<{
     icao24: string; callsign: string; altitude_ft: number;
@@ -272,8 +274,12 @@ export default function App() {
   const myGrid = (myCallsign ? stationGridOverrides[myCallsign] : null) ?? wsjtxLive.de_grid;
   const selectedDxGrid = (dxCall ? stationGridOverrides[dxCall] : null) ?? dxGrid;
 
-  useEffect(() => { setMyGridInput(myGrid ?? ""); }, [myCallsign]);
-  useEffect(() => { setDxGridInput(selectedDxGrid ?? ""); }, [dxCall]);
+  useEffect(() => {
+    if (!myGridEditing) setMyGridInput(myGrid ?? "");
+  }, [myGrid, myGridEditing]);
+  useEffect(() => {
+    if (!dxGridEditing) setDxGridInput(selectedDxGrid ?? "");
+  }, [selectedDxGrid, dxGridEditing]);
 
   function savePortableGrid(callsign: string | null, grid: string | null) {
     if (!callsign) return;
@@ -372,6 +378,8 @@ export default function App() {
                 <input
                   value={myGridInput}
                   onChange={(e) => setMyGridInput(e.target.value.toUpperCase())}
+                  onFocus={() => setMyGridEditing(true)}
+                  onBlur={() => setMyGridEditing(false)}
                   placeholder={wsjtxLive.de_grid ?? "Grid"}
                   style={{
                     background: "var(--surface)",
@@ -402,6 +410,8 @@ export default function App() {
                 <input
                   value={dxGridInput}
                   onChange={(e) => setDxGridInput(e.target.value.toUpperCase())}
+                  onFocus={() => setDxGridEditing(true)}
+                  onBlur={() => setDxGridEditing(false)}
                   placeholder={dxGrid ?? "Grid"}
                   style={{
                     background: "var(--surface)",
@@ -422,9 +432,10 @@ export default function App() {
                     }
                     const grid = normalizeGrid(dxGridInput);
                     const locatorB = grid ?? dxGrid;
+                    const locatorA = myGrid ?? wsjtxLive.de_grid;
                     savePortableGrid(dxCall, grid);
-                    if (locatorB) {
-                      rpc("airscout_set_stations", { locator_a: myGrid, locator_b: locatorB }).catch(() => {});
+                    if (locatorA && locatorB) {
+                      rpc("airscout_set_stations", { locator_a: locatorA, locator_b: locatorB }).catch(() => {});
                     }
                     addLog(`DX grid ${grid ? `override → ${grid}` : "reset to callbook"}`);
                   }}>
