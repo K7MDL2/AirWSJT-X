@@ -12,6 +12,7 @@ permissions:
 jobs:
   ios:
     runs-on: macos-latest
+    if: ${{ secrets.APPLE_DEVELOPMENT_TEAM != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -34,6 +35,7 @@ jobs:
         run: npx tauri ios build --debug
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
 
       - name: Package iOS artifacts
         run: |
