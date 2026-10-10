@@ -64,6 +64,7 @@ class OpenSkyFeed:
         max_backoff_s: float = 300.0,
         on_update: Callable[[list[Aircraft]], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        on_rate_limited: Callable[[float], None] | None = None,
     ) -> None:
         self.lat_min = lat_min
         self.lon_min = lon_min
@@ -73,6 +74,7 @@ class OpenSkyFeed:
         self.max_backoff_s = max_backoff_s
         self.on_update = on_update
         self.on_error = on_error
+        self.on_rate_limited = on_rate_limited
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -142,6 +144,8 @@ class OpenSkyFeed:
                     consecutive_429 += 1
                     base_delay = max(self.interval_s, 10.0)
                     wait_s = min(base_delay * (2 ** (consecutive_429 - 1)), self.max_backoff_s)
+                    if self.on_rate_limited:
+                        self.on_rate_limited(wait_s)
                     if self.on_error:
                         self.on_error(
                             f"HTTP Error 429: OpenSky rate limit; retrying in {int(wait_s)}s"
