@@ -31,39 +31,45 @@ pub fn run() {
             let state_clone = sidecar_state.clone();
             app.manage(sidecar_state);
 
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let sidecar_cmd = handle
-                    .shell()
-                    .sidecar("airwsjtx_bridge")
-                    .expect("failed to create sidecar command");
-                let (mut rx, child) = sidecar_cmd.spawn().expect("failed to spawn sidecar");
+            // On mobile, skip sidecar — the frontend runs standalone
+            #[cfg(not(mobile))]
+            {
+                let handle = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    let sidecar_cmd = handle
+                        .shell()
+                        .sidecar("airwsjtx_bridge")
+                        .expect("failed to create sidecar command");
+                    let (mut rx, child) = sidecar_cmd.spawn().expect("failed to spawn sidecar");
 
-                {
-                    let mut guard = state_clone.lock().await;
-                    guard.tx = Some(child);
-                }
-
-                while let Some(event) = rx.recv().await {
-                    match event {
-                        CommandEvent::Stdout(line) => {
-                            let _ = handle.emit("sidecar-message", String::from_utf8_lossy(&line).to_string());
-                        }
-                        CommandEvent::Stderr(line) => {
-                            eprintln!("sidecar stderr: {}", String::from_utf8_lossy(&line));
-                        }
-                        CommandEvent::Error(e) => {
-                            eprintln!("sidecar error: {}", e);
-                            break;
-                        }
-                        CommandEvent::Terminated(_) => {
-                            eprintln!("sidecar terminated");
-                            break;
-                        }
-                        _ => {}
+                    {
+                        let mut guard = state_clone.lock().await;
+                        guard.tx = Some(child);
                     }
-                }
-            });
+
+                    while let Some(event) = rx.recv().await {
+                        match event {
+                            CommandEvent::Stdout(line) => {
+                                let _ = handle.emit("sidecar-message", String::from_utf8_lossy(&line).to_string());
+                            }
+                            CommandEvent::Stderr(line) => {
+                                eprintln!("sidecar stderr: {}", String::from_utf8_lossy(&line));
+                            }
+                            CommandEvent::Error(e) => {
+                                eprintln!("sidecar error: {}", e);
+                                break;
+                            }
+                            CommandEvent::Terminated(_) => {
+                                eprintln!("sidecar terminated");
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                });
+            }
+            #[cfg(mobile)]
+            let _ = state_clone;
 
             Ok(())
         })

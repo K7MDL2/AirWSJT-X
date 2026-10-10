@@ -90,19 +90,19 @@ jobs:
           releaseBody: |
             ## AirWSJT-X ${{ github.ref_name }}
 
-            ### What's New in v0.1.1
-            - Large Az/El portable display mode
-            - Aircraft filtering by position, altitude, and heading
-            - Offline connectivity with data freshness indicators
-            - RTL-SDR / dump1090 ADS-B source support
-            - Downloadable callsign/grid database with offline lookup
-            - Speech output for azimuth/elevation callouts
-            - Manual antenna pointing UI mode
+            ### What's New in v0.2.0
+            - **Mobile app** (iOS & Android) — standalone aircraft tracking with OpenSky Network
+            - Mobile compass rose and elevation arc for hand-pointing antennas
+            - Offline callsign database with IndexedDB on mobile
+            - Speech callouts for selected aircraft Az/El on mobile
+            - Platform detection: desktop launches full WSJT-X supervisor, mobile launches standalone tracker
 
             ### Downloads
             - **macOS (Apple Silicon):** `.dmg` file
             - **macOS (Intel):** `.dmg` file
             - **Windows:** `.msi` installer or `.exe` setup
+            - **iOS:** `.tar.gz` (from mobile build workflow)
+            - **Android:** `.apk` (from mobile build workflow)
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
