@@ -244,17 +244,28 @@ export default function App() {
   const state = status?.state ?? "idle";
   const stateColor = STATE_COLOR[state] ?? "#8b949e";
   const aircraft = airscout?.aircraft ?? [];
+<<<<<<< HEAD
+<<<<<<< HEAD
   const txOffsetTitle = wsjtxLive.tx_df != null ? `TX frequency offset: ${wsjtxLive.tx_df}Hz.` : null;
   const txOffset = txOffsetTitle ? ` ${txOffsetTitle}` : "";
   const txIndicatorTitle = wsjtxLive.transmitting
     ? `Red TX means transmitting (PTT ON).${txOffset}`
     : `TX○ means idle (not transmitting).${txOffset}`;
-  const canStartQso =
-    (state === "plane_locked" || state === "tracking" || state === "ready") &&
-    wsjtxLive.connected &&
+  const wsjtxReady = wsjtxLive.connected &&
     wsjtxLive.mode === "Q65" &&
     wsjtxLive.tr_period === 15 &&
-    (wsjtxLive.freq_mhz === null || wsjtxLive.freq_mhz >= 1240);
+    (wsjtxLive.freq_mhz == null || wsjtxLive.freq_mhz >= 1240);
+  const canStartQso = wsjtxReady && (
+    state === "ready" ||
+    (!autoLock && !!lockedPlane && (state === "plane_locked" || state === "tracking"))
+  );
+=======
+  const canStartQso = state === "ready" || (!autoLock && !!lockedPlane && MANUAL_OVERRIDE_STATES.has(state));
+>>>>>>> 37166b8 (Polish manual override naming and state tests)
+=======
+  const canStartQso = state === SESSION_STATE.READY
+    || (!autoLock && !!lockedPlane && MANUAL_OVERRIDE_STATES.has(state));
+>>>>>>> 74f5dca (Strengthen state gating constants and tests)
 
   return (
     <div className="app">
