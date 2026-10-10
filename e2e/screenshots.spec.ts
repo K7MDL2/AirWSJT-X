@@ -30,7 +30,7 @@ async function emitRpcResponse(
   );
 }
 
-// Simulated aircraft between AD7NP (CN87us) and K7MDL (CN87tp) on the 10 GHz path
+// Simulated aircraft between AD7NP (CN87vp) and K7MDL (CN87tp) on the 10 GHz path
 const mockAircraft = [
   {
     icao24: "a1b2c3",
@@ -135,7 +135,7 @@ test.describe("AirWSJT-X Screenshots", () => {
       mode: "Q65",
       sub_mode: "C",
       de_call: "AD7NP",
-      de_grid: "CN87us",
+      de_grid: "CN87vp",
       dx_call: "K7MDL",
       transmitting: false,
       decoding: true,
@@ -157,7 +157,7 @@ test.describe("AirWSJT-X Screenshots", () => {
     await emitSidecar(page, "airscout_update", {
       aircraft: mockAircraft,
       total: 47,
-      station_a: "CN87us",
+      station_a: "CN87vp",
       station_b: "CN87tp",
       active_source: "opensky",
       last_update_epoch_s: Math.floor(Date.now() / 1000) - 3,
@@ -235,7 +235,7 @@ test.describe("AirWSJT-X Screenshots", () => {
       mode: "Q65",
       sub_mode: "C",
       de_call: "AD7NP",
-      de_grid: "CN87us",
+      de_grid: "CN87vp",
       dx_call: "K7MDL",
       transmitting: true,
       decoding: false,
@@ -255,7 +255,7 @@ test.describe("AirWSJT-X Screenshots", () => {
     await emitSidecar(page, "airscout_update", {
       aircraft: mockAircraft,
       total: 47,
-      station_a: "CN87us",
+      station_a: "CN87vp",
       station_b: "CN87tp",
       active_source: "opensky",
       last_update_epoch_s: Math.floor(Date.now() / 1000) - 3,

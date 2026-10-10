@@ -79,7 +79,7 @@ test.describe("Demo Video", () => {
 
     await emitSidecar(page, "wsjtx_status", {
       freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "",
+      de_call: "AD7NP", de_grid: "CN87vp", dx_call: "",
       transmitting: false, decoding: true,
       tr_period: 15, rx_df: 1247, tx_df: 1250,
       config_name: "10 GHz",
@@ -113,7 +113,7 @@ test.describe("Demo Video", () => {
     // First just 1 aircraft
     await emitSidecar(page, "airscout_update", {
       aircraft: [aircraft[3]],
-      total: 12, station_a: "CN87us", station_b: "CN87tp",
+      total: 12, station_a: "CN87vp", station_b: "CN87tp",
       active_source: "opensky",
       last_update_epoch_s: Math.floor(Date.now() / 1000),
       cache_age_s: 1, data_freshness: "fresh",
@@ -123,7 +123,7 @@ test.describe("Demo Video", () => {
     // Then 2 aircraft
     await emitSidecar(page, "airscout_update", {
       aircraft: [aircraft[2], aircraft[3]],
-      total: 23, station_a: "CN87us", station_b: "CN87tp",
+      total: 23, station_a: "CN87vp", station_b: "CN87tp",
       active_source: "opensky",
       last_update_epoch_s: Math.floor(Date.now() / 1000),
       cache_age_s: 1, data_freshness: "fresh",
@@ -133,7 +133,7 @@ test.describe("Demo Video", () => {
     // Then all 4 aircraft
     await emitSidecar(page, "airscout_update", {
       aircraft,
-      total: 47, station_a: "CN87us", station_b: "CN87tp",
+      total: 47, station_a: "CN87vp", station_b: "CN87tp",
       active_source: "opensky",
       last_update_epoch_s: Math.floor(Date.now() / 1000),
       cache_age_s: 1, data_freshness: "fresh",
@@ -186,7 +186,7 @@ test.describe("Demo Video", () => {
 
     const wsjtxBase = {
       freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
+      de_call: "AD7NP", de_grid: "CN87vp", dx_call: "K7MDL",
       tr_period: 15, rx_df: 1247, tx_df: 1250,
       config_name: "10 GHz",
     };
