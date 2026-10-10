@@ -178,85 +178,72 @@ test.describe("Demo Video", () => {
       await page.waitForTimeout(800);
     }
 
-    // ── Phase 9: CQ from K7MDL — QSO begins ────────────────────────
+    // ── Phase 9: Q65-15s QSO exchange ─────────────────────────────────
+    // Realistic Q65 timing: stations alternate TX/RX every 15 seconds.
+    // K7MDL transmits on even sequences, AD7NP on odd.
+    // AD7NP only sees decodes from K7MDL (not its own TX).
+    // Timestamps increment by 15s per period.
+
+    const wsjtxBase = {
+      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
+      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
+      tr_period: 15, rx_df: 1247, tx_df: 1250,
+      config_name: "10 GHz",
+    };
+
+    // Build timestamps with proper 15s spacing
+    const t0 = new Date();
+    t0.setSeconds(0, 0); // align to minute boundary
+    const qsoTs = (seq: number) => {
+      const t = new Date(t0.getTime() + seq * 15000);
+      return t.toLocaleTimeString();
+    };
+
+    // Seq 0 (even) — K7MDL CQ: AD7NP is receiving, decodes CQ
+    await emitSidecar(page, "wsjtx_status", {
+      ...wsjtxBase, transmitting: false, decoding: true,
+    });
+    await page.waitForTimeout(3000);
     await emitSidecar(page, "wsjtx_decode", {
       message: "CQ K7MDL CN87", snr: -18,
-      delta_freq_hz: 1247, mode: "Q65", ts: ts(),
+      delta_freq_hz: 1247, mode: "Q65", ts: qsoTs(0),
     });
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(2000);
 
-    // AD7NP responds — TX
+    // Seq 1 (odd) — AD7NP responds with grid: TX for 15s
     await setState(page, "active_qso");
     await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: true, decoding: false,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
+      ...wsjtxBase, transmitting: true, decoding: false,
     });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(5000);
 
-    // Back to RX — K7MDL sends grid
+    // Seq 2 (even) — K7MDL sends signal report: AD7NP receives & decodes
     await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: false, decoding: true,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
+      ...wsjtxBase, transmitting: false, decoding: true,
     });
-    await emitSidecar(page, "wsjtx_decode", {
-      message: "K7MDL AD7NP CN87", snr: -21,
-      delta_freq_hz: 1247, mode: "Q65", ts: ts(),
-    });
-    await page.waitForTimeout(2500);
-
-    // AD7NP TX signal report
-    await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: true, decoding: false,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
-    });
-    await page.waitForTimeout(2000);
-
-    // K7MDL sends R-19
-    await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: false, decoding: true,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
-    });
+    await page.waitForTimeout(3000);
     await emitSidecar(page, "wsjtx_decode", {
       message: "AD7NP K7MDL R-19", snr: -19,
-      delta_freq_hz: 1250, mode: "Q65", ts: ts(),
-    });
-    await page.waitForTimeout(2500);
-
-    // AD7NP sends RR73 — final TX
-    await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: true, decoding: false,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
+      delta_freq_hz: 1250, mode: "Q65", ts: qsoTs(2),
     });
     await page.waitForTimeout(2000);
 
-    // K7MDL confirms — QSO complete
+    // Seq 3 (odd) — AD7NP sends RR73: TX for 15s
     await emitSidecar(page, "wsjtx_status", {
-      freq_mhz: 10368.1, mode: "Q65", sub_mode: "C",
-      de_call: "AD7NP", de_grid: "CN87us", dx_call: "K7MDL",
-      transmitting: false, decoding: true,
-      tr_period: 15, rx_df: 1247, tx_df: 1250,
-      config_name: "10 GHz",
+      ...wsjtxBase, transmitting: true, decoding: false,
     });
+    await page.waitForTimeout(5000);
+
+    // Seq 4 (even) — K7MDL sends 73: AD7NP receives final confirmation
+    await emitSidecar(page, "wsjtx_status", {
+      ...wsjtxBase, transmitting: false, decoding: true,
+    });
+    await page.waitForTimeout(3000);
     await emitSidecar(page, "wsjtx_decode", {
-      message: "K7MDL AD7NP RR73", snr: -17,
-      delta_freq_hz: 1247, mode: "Q65", ts: ts(),
+      message: "K7MDL AD7NP 73", snr: -16,
+      delta_freq_hz: 1247, mode: "Q65", ts: qsoTs(4),
     });
-    await page.waitForTimeout(1500);
+    await page.waitForTimeout(2000);
 
     // ── Phase 10: QSO completed ─────────────────────────────────────
     await setState(page, "completed");
