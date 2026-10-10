@@ -38,3 +38,18 @@ python -m unittest discover -s tests
 - `TX○` means WSJT-X is idle (not transmitting).
 - Red `TX●` means WSJT-X is currently transmitting (PTT ON).
 - `TX <value>Hz` shows the current TX frequency offset (`tx_df`) reported by WSJT-X.
+
+## FAQ
+
+### Is AirWSJT-X safe for airplanes?
+
+Yes — AirWSJT-X has absolutely no effect on aircraft or aviation systems.
+
+AirWSJT-X is a **passive** ham radio tool. It reads publicly available aircraft position data (the same data used by flight-tracking apps like Flightradar24 and ADS-B Exchange) to identify airplanes flying between two ham radio stations. When a plane is in the right geometric position, operators can bounce weak VHF/UHF radio signals off the aircraft's metal fuselage to communicate with each other — a technique called **aircraft scatter**.
+
+- **No equipment is installed on the airplane.** The aircraft is simply a passive reflector, like a building or a mountain.
+- **No frequencies are shared with aviation.** Ham radio bands are completely separate from aircraft communication and navigation frequencies.
+- **No signals are transmitted *to* the airplane.** The radio energy that reaches the fuselage is extremely weak (far less than a typical WiFi router) and reflects naturally off the metal surface.
+- **No aircraft systems are affected.** The airplane's crew, passengers, avionics, and navigation are completely unaware of and unaffected by the process.
+
+Aircraft scatter is a well-established technique in amateur radio that has been used safely for decades.
