@@ -1,0 +1,77 @@
+import struct
+import unittest
+
+from airwsjtx.wsjtx_udp import MSG_STATUS, WSJTX_MAGIC, parse_status
+
+
+def _enc_str(value: str | None) -> bytes:
+    if value is None:
+        return struct.pack(">I", 0xFFFFFFFF)
+    b = value.encode("utf-8")
+    return struct.pack(">I", len(b)) + b
+
+
+def _build_status_packet(mode: str | None, tr_period: int) -> bytes:
+    return b"".join(
+        [
+            struct.pack(">I", WSJTX_MAGIC),  # magic
+            struct.pack(">I", 2),  # schema
+            struct.pack(">I", MSG_STATUS),  # message type
+            _enc_str("WSJT-X"),
+            struct.pack(">Q", 18100000),  # frequency Hz
+            _enc_str(mode),
+            _enc_str(None),  # dx_call
+            _enc_str(None),  # report
+            _enc_str(None),  # tx_mode
+            struct.pack(">B", 0),  # tx_enabled
+            struct.pack(">B", 0),  # transmitting
+            struct.pack(">B", 0),  # decoding
+            struct.pack(">I", 2303),  # rx_df
+            struct.pack(">I", 1600),  # tx_df
+            _enc_str("K7MDL"),  # de_call
+            _enc_str("CN87XS"),  # de_grid
+            _enc_str(None),  # dx_grid
+            struct.pack(">B", 0),  # tx_watchdog
+            _enc_str(None),  # sub_mode
+            struct.pack(">B", 0),  # fast_mode
+            struct.pack(">B", 0),  # special_op_mode
+            struct.pack(">I", 50),  # freq_tolerance
+            struct.pack(">i", tr_period),  # tr_period (signed i32)
+            _enc_str(None),  # config_name
+        ]
+    )
+
+
+class WSJTXStatusParsingTests(unittest.TestCase):
+    def test_status_maps_fixed_modes_unset_period_to_default(self) -> None:
+        for unset in (-1, 0):
+            for mode, expected in (("FT8", 15.0), ("FT4", 7.5), ("FT2", 2.5), ("JT65", 60.0)):
+                with self.subTest(mode=mode, unset=unset):
+                    st = parse_status(_build_status_packet(mode, unset))
+                    self.assertIsNotNone(st)
+                    assert st is not None
+                    self.assertEqual(st.tr_period, expected)
+
+    def test_status_uses_wire_period_when_positive(self) -> None:
+        st = parse_status(_build_status_packet("Q65", 30))
+        self.assertIsNotNone(st)
+        assert st is not None
+        self.assertEqual(st.tr_period, 30.0)
+
+    def test_status_uses_none_for_unmapped_mode_with_unset_period(self) -> None:
+        for unset in (-1, 0):
+            with self.subTest(unset=unset):
+                st = parse_status(_build_status_packet("Q65", unset))
+                self.assertIsNotNone(st)
+                assert st is not None
+                self.assertIsNone(st.tr_period)
+
+    def test_status_uses_none_for_missing_mode_with_negative_period(self) -> None:
+        st = parse_status(_build_status_packet(None, -1))
+        self.assertIsNotNone(st)
+        assert st is not None
+        self.assertIsNone(st.tr_period)
+
+
+if __name__ == "__main__":
+    unittest.main()
