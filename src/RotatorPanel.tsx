@@ -197,7 +197,7 @@ function ElevationArc({
   // 0° = left end, 90° = top centre
   function elToXY(el: number, r: number) {
     const rad = Math.PI - (el / 90) * Math.PI;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+    return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
   }
 
   // Arc path from 0° to 90°
@@ -244,9 +244,9 @@ function ElevationArc({
     <svg width={width} height={height} style={{ cursor: onClick ? "crosshair" : "default" }}
       onClick={handleClick}>
       {/* Background arc */}
-      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 0 ${arcEnd.x} ${arcEnd.y}`}
+      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 1 ${arcEnd.x} ${arcEnd.y}`}
         fill="none" stroke="#1c2128" strokeWidth={20} strokeLinecap="round" />
-      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 0 ${arcEnd.x} ${arcEnd.y}`}
+      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 1 ${arcEnd.x} ${arcEnd.y}`}
         fill="none" stroke="#30363d" strokeWidth={1.5} />
 
       {/* Fill arc up to current elevation */}
@@ -254,7 +254,7 @@ function ElevationArc({
         const fillEnd = elToXY(Math.max(0.5, current), R);
         return (
           <path
-            d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 ${current > 45 ? 1 : 0} 0 ${fillEnd.x} ${fillEnd.y}`}
+            d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 ${current > 45 ? 1 : 0} 1 ${fillEnd.x} ${fillEnd.y}`}
             fill="none" stroke="rgba(88,166,255,0.25)" strokeWidth={18} strokeLinecap="round"
           />
         );

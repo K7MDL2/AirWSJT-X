@@ -121,7 +121,7 @@ function ElevationArc({
 
   function elToXY(el: number, r: number) {
     const rad = Math.PI - (el / 90) * Math.PI;
-    return { x: cx + r * Math.cos(rad), y: cy + r * Math.sin(rad) };
+    return { x: cx + r * Math.cos(rad), y: cy - r * Math.sin(rad) };
   }
 
   const arcStart = elToXY(0, R);
@@ -147,9 +147,9 @@ function ElevationArc({
 
   return (
     <svg width={width} height={height} style={{ userSelect: "none" }}>
-      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 0 ${arcEnd.x} ${arcEnd.y}`}
+      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 1 ${arcEnd.x} ${arcEnd.y}`}
         fill="none" stroke="#1c2128" strokeWidth={16} strokeLinecap="round" />
-      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 0 ${arcEnd.x} ${arcEnd.y}`}
+      <path d={`M ${arcStart.x} ${arcStart.y} A ${R} ${R} 0 0 1 ${arcEnd.x} ${arcEnd.y}`}
         fill="none" stroke="#30363d" strokeWidth={1.5} />
       {ticks}
       {current !== null && (
