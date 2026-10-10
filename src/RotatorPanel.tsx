@@ -535,6 +535,7 @@ export default function RotatorPanel({
             {isManualMode
               ? "Use the compass or arc for quick hand-pointing. Orange = target · Blue = current."
               : "Click the compass or elevation arc to set target position. Orange dashed = target · Blue solid = current."}
+          </div>
         </div>
       )}
       {!connected && isManualMode && (
