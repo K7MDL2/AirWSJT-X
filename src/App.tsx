@@ -156,6 +156,9 @@ const PORTABLE_MIN_FONT_PX = 28;
 const PORTABLE_BASE_FONT_PX = 72;
 
 type PortableViewMode = "hidden" | "panel" | "overlay";
+const ROTATOR_SPEECH_ENABLED_KEY = "airwsjtx.rotatorSpeech.enabled";
+const ROTATOR_SPEECH_THRESHOLD_KEY = "airwsjtx.rotatorSpeech.thresholdDeg";
+const ROTATOR_SPEECH_INTERVAL_KEY = "airwsjtx.rotatorSpeech.intervalSec";
 
 function normalizeGrid(grid: string | null | undefined): string | null {
   const normalized = (grid ?? "").trim().toUpperCase();
@@ -181,6 +184,19 @@ export default function App() {
   const [rotatorEl, setRotatorEl] = useState(0);
   const [rotatorTargetAz, setRotatorTargetAz] = useState<number | null>(null);
   const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
+  const [rotatorSpeechEnabled, setRotatorSpeechEnabled] = useState(() => localStorage.getItem(ROTATOR_SPEECH_ENABLED_KEY) === "1");
+  const [rotatorSpeechThresholdDeg, setRotatorSpeechThresholdDeg] = useState(() => {
+    const raw = localStorage.getItem(ROTATOR_SPEECH_THRESHOLD_KEY);
+    if (raw === null) return 3;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : 3;
+  });
+  const [rotatorSpeechIntervalSec, setRotatorSpeechIntervalSec] = useState(() => {
+    const raw = localStorage.getItem(ROTATOR_SPEECH_INTERVAL_KEY);
+    if (raw === null) return 2;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? value : 2;
+  });
   const [dxCallsign, setDxCallsign] = useState<string | null>(null);
   const [dxGrid, setDxGrid] = useState<string | null>(null);
   const [stationGridOverrides, setStationGridOverrides] = useState<Record<string, string>>(() => {
@@ -222,6 +238,8 @@ export default function App() {
     rotator_az?: number | null; rotator_el?: number | null;
   } | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
+  const rotatorSpeechLastAnnouncedRef = useRef<{ az: number; el: number; at: number } | null>(null);
+  const rotatorSpeechLastProcessedRef = useRef<{ az: number; el: number } | null>(null);
 
   const addLog = useCallback((msg: string) => {
     setLog((l) => [...l.slice(-49), `${new Date().toLocaleTimeString()} ${msg}`]);
@@ -364,6 +382,51 @@ export default function App() {
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
   }, [log]);
+
+  useEffect(() => {
+    localStorage.setItem(ROTATOR_SPEECH_ENABLED_KEY, rotatorSpeechEnabled ? "1" : "0");
+  }, [rotatorSpeechEnabled]);
+  useEffect(() => {
+    localStorage.setItem(ROTATOR_SPEECH_THRESHOLD_KEY, String(rotatorSpeechThresholdDeg));
+  }, [rotatorSpeechThresholdDeg]);
+  useEffect(() => {
+    localStorage.setItem(ROTATOR_SPEECH_INTERVAL_KEY, String(rotatorSpeechIntervalSec));
+  }, [rotatorSpeechIntervalSec]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (!rotatorConnected || !rotatorSpeechEnabled) {
+      if (rotatorSpeechLastAnnouncedRef.current) window.speechSynthesis.cancel();
+      rotatorSpeechLastAnnouncedRef.current = null;
+      rotatorSpeechLastProcessedRef.current = null;
+      return;
+    }
+    const processed = rotatorSpeechLastProcessedRef.current;
+    if (processed && processed.az === rotatorAz && processed.el === rotatorEl) return;
+    rotatorSpeechLastProcessedRef.current = { az: rotatorAz, el: rotatorEl };
+    const now = Date.now();
+    const last = rotatorSpeechLastAnnouncedRef.current;
+    const speechText = `Azimuth ${Math.round(rotatorAz)}, Elevation ${Math.round(rotatorEl)}`;
+    if (!last) {
+      rotatorSpeechLastAnnouncedRef.current = { az: rotatorAz, el: rotatorEl, at: now };
+      return;
+    }
+    const azDelta = Math.abs(((rotatorAz - last.az + 540) % 360) - 180);
+    const elDelta = Math.abs(rotatorEl - last.el);
+    if (Math.max(azDelta, elDelta) < rotatorSpeechThresholdDeg) return;
+    if (now - last.at < rotatorSpeechIntervalSec * 1000) return;
+    const utterance = new SpeechSynthesisUtterance(speechText);
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(utterance);
+    rotatorSpeechLastAnnouncedRef.current = { az: rotatorAz, el: rotatorEl, at: now };
+  }, [
+    rotatorAz,
+    rotatorEl,
+    rotatorConnected,
+    rotatorSpeechEnabled,
+    rotatorSpeechThresholdDeg,
+    rotatorSpeechIntervalSec,
+  ]);
 
   async function startQso() {
     try {
@@ -881,6 +944,12 @@ export default function App() {
               targetAz={lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
               targetEl={lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
               connected={rotatorConnected}
+              speechEnabled={rotatorSpeechEnabled}
+              speechThresholdDeg={rotatorSpeechThresholdDeg}
+              speechIntervalSec={rotatorSpeechIntervalSec}
+              onSpeechEnabledChange={setRotatorSpeechEnabled}
+              onSpeechThresholdDegChange={(value) => setRotatorSpeechThresholdDeg(Math.max(0.1, value))}
+              onSpeechIntervalSecChange={(value) => setRotatorSpeechIntervalSec(Math.max(0, value))}
               onSetPosition={(az, el) => {
                 setRotatorTargetAz(az); setRotatorTargetEl(el);
                 rpc("rotator_set", { azimuth: az, elevation: el }).catch(e => addLog(`Rotator: ${e}`));
