@@ -1,5 +1,5 @@
 const RPC_RESPONSES: Record<string, (params: Record<string, unknown>) => unknown> = {
-  get_status: () => ({ state: "tracking" }),
+  get_status: () => ({ state: (window as unknown as Record<string, string>).__mockState ?? "tracking" }),
   callsign_lookup: (p) => ({
     callsign: p.callsign as string,
     grid: (window as unknown as Record<string, Record<string, string>>).__mockGrids?.[p.callsign as string] ?? null,
