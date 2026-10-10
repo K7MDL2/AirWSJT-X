@@ -397,7 +397,7 @@ export default function App() {
                     const grid = normalizeGrid(myGridInput);
                     const locatorA = grid ?? wsjtxLive.de_grid;
                     savePortableGrid(myCallsign, grid);
-                    if (selectedDxGrid) {
+                    if (locatorA && selectedDxGrid) {
                       rpc("airscout_set_stations", { locator_a: locatorA, locator_b: selectedDxGrid }).catch(() => {});
                     }
                     addLog(`MY grid ${grid ? `override → ${grid}` : "reset to WSJT-X"}`);
@@ -453,8 +453,11 @@ export default function App() {
                   onClick={() => {
                     setDxCallsign(s.call); setDxGrid(s.grid.toUpperCase());
                     const dxLocator = stationGridOverrides[s.call] ?? s.grid.toUpperCase();
+                    const locatorA = myGrid ?? wsjtxLive.de_grid;
                     rpc("set_station_calls", { call_a: myCallsign, call_b: s.call }).catch(() => {});
-                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                    if (locatorA && dxLocator) {
+                      rpc("airscout_set_stations", { locator_a: locatorA, locator_b: dxLocator }).catch(() => {});
+                    }
                     addLog(`DX → ${s.call} ${dxLocator}`);
                   }}>
                   {s.call}
@@ -468,11 +471,12 @@ export default function App() {
                   const nextCall = info.callsign.trim().toUpperCase();
                   const lookedUpGrid = normalizeGrid(info.grid);
                   const dxLocator = stationGridOverrides[nextCall] ?? lookedUpGrid;
+                  const locatorA = myGrid ?? wsjtxLive.de_grid;
                   setDxCallsign(nextCall);
                   setDxGrid(lookedUpGrid);
                   rpc("set_station_calls", { call_a: myCallsign, call_b: nextCall }).catch(() => {});
-                  if (dxLocator) {
-                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                  if (locatorA && dxLocator) {
+                    rpc("airscout_set_stations", { locator_a: locatorA, locator_b: dxLocator }).catch(() => {});
                   }
                   addLog(
                     dxLocator
