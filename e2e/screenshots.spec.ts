@@ -114,7 +114,17 @@ test.describe("AirWSJT-X Screenshots", () => {
     // Hide the portable AZ/EL overlay so the 3-column layout is visible
     await page.addInitScript(() => {
       localStorage.setItem("airwsjtx.portableViewMode", "hidden");
+      // Pre-populate grid lookup data for the mock RPC handler
+      (window as unknown as Record<string, unknown>).__mockGrids = { K7MDL: "CN87tp" };
     });
+
+    // Auto-answer the "DX callsign:" prompt dialog
+    page.on("dialog", async (dialog) => {
+      if (dialog.type() === "prompt") {
+        await dialog.accept("K7MDL");
+      }
+    });
+
     await page.goto("/");
     await page.waitForTimeout(1000);
 
@@ -135,11 +145,15 @@ test.describe("AirWSJT-X Screenshots", () => {
       config_name: "10 GHz",
     });
 
-    // 2. Rotator connected and tracking
+    // 2. Set DX station via the "+ Other" button (triggers callsign_lookup RPC)
+    await page.getByRole("button", { name: "+ Other" }).click();
+    await page.waitForTimeout(500);
+
+    // 3. Rotator connected and tracking
     await emitSidecar(page, "rotator_connected", { host: "localhost", port: 4533 });
     await emitSidecar(page, "rotator_position", { azimuth: 145.2, elevation: 4.8 });
 
-    // 3. Aircraft data
+    // 4. Aircraft data
     await emitSidecar(page, "airscout_update", {
       aircraft: mockAircraft,
       total: 47,
@@ -160,7 +174,7 @@ test.describe("AirWSJT-X Screenshots", () => {
       },
     });
 
-    // 4. Lock on UAL1547 — best scatter candidate
+    // 5. Lock on UAL1547 — best scatter candidate
     await emitSidecar(page, "plane_locked", {
       icao24: "a1b2c3",
       callsign: "UAL1547",
@@ -176,7 +190,7 @@ test.describe("AirWSJT-X Screenshots", () => {
       rotator_el: 4.8,
     });
 
-    // 5. Inject decodes
+    // 6. Inject decodes
     for (const decode of mockDecodes) {
       decode.ts = new Date().toLocaleTimeString();
       await emitSidecar(page, "wsjtx_decode", decode);
@@ -195,12 +209,22 @@ test.describe("AirWSJT-X Screenshots", () => {
     await expect(page.getByRole("banner").getByText("AD7NP")).toBeVisible();
     await expect(page.getByText("10368.100 MHz")).toBeVisible();
     await expect(page.locator(".ac-table").getByText("UAL1547")).toBeVisible();
+    await expect(page.locator(".call").getByText("K7MDL", { exact: true })).toBeVisible();
+    await expect(page.locator(".grid").getByText("CN87TP", { exact: true })).toBeVisible();
   });
 
   test("desktop — active QSO with TX", async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem("airwsjtx.portableViewMode", "hidden");
+      (window as unknown as Record<string, unknown>).__mockGrids = { K7MDL: "CN87tp" };
     });
+
+    page.on("dialog", async (dialog) => {
+      if (dialog.type() === "prompt") {
+        await dialog.accept("K7MDL");
+      }
+    });
+
     await page.goto("/");
     await page.waitForTimeout(1000);
 
@@ -220,6 +244,10 @@ test.describe("AirWSJT-X Screenshots", () => {
       tx_df: 1250,
       config_name: "10 GHz",
     });
+
+    // Set DX station via "+ Other" button
+    await page.getByRole("button", { name: "+ Other" }).click();
+    await page.waitForTimeout(500);
 
     await emitSidecar(page, "rotator_connected", { host: "localhost", port: 4533 });
     await emitSidecar(page, "rotator_position", { azimuth: 145.2, elevation: 4.8 });
