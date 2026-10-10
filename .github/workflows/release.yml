@@ -105,4 +105,4 @@ jobs:
             - **Android:** `.apk` (from mobile build workflow)
           releaseDraft: false
           prerelease: false
-          args: --target ${{ matrix.target }}
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.desktop.conf.json
