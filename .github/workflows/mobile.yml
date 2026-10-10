@@ -30,27 +30,26 @@ jobs:
       - name: Initialize Tauri iOS
         run: npx tauri ios init
 
-      - name: Build iOS (unsigned .app)
-        run: npx tauri ios build --export-method development
+      - name: Build iOS
+        run: npx tauri ios build --debug
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Package iOS artifacts
         run: |
-          cd src-tauri/gen/apple/build
-          find . -name "*.app" -type d | head -1 | xargs -I{} tar czf /tmp/AirWSJT-X-ios.tar.gz {}
+          find src-tauri/gen/apple -name "*.app" -type d | head -1 | xargs -I{} tar czf /tmp/AirWSJT-X-ios-debug.tar.gz {}
 
       - name: Upload iOS artifact
         uses: actions/upload-artifact@v4
         with:
           name: ios-build
-          path: /tmp/AirWSJT-X-ios.tar.gz
+          path: /tmp/AirWSJT-X-ios-debug.tar.gz
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: /tmp/AirWSJT-X-ios.tar.gz
+          files: /tmp/AirWSJT-X-ios-debug.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -73,14 +72,11 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Install Android NDK
-        run: sdkmanager "ndk;27.0.12077973"
-
-      - name: Set NDK path
-        run: echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
+        run: |
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 || true
+          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "ndk;27.0.12077973"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> $GITHUB_ENV
 
       - name: Install frontend dependencies
         run: npm ci
