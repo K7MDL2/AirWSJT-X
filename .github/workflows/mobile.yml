@@ -10,50 +10,36 @@ permissions:
   contents: write
 
 jobs:
-  ios:
-    runs-on: macos-latest
-    if: ${{ secrets.APPLE_DEVELOPMENT_TEAM != '' }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Initialize Tauri iOS
-        run: npx tauri ios init
-
-      - name: Build iOS
-        run: npx tauri ios build --debug
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-
-      - name: Package iOS artifacts
-        run: |
-          find src-tauri/gen/apple -name "*.app" -type d | head -1 | xargs -I{} tar czf /tmp/AirWSJT-X-ios-debug.tar.gz {}
-
-      - name: Upload iOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-build
-          path: /tmp/AirWSJT-X-ios-debug.tar.gz
-
-      - name: Attach to release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: /tmp/AirWSJT-X-ios-debug.tar.gz
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # iOS build requires Apple Developer signing credentials.
+  # To enable: add APPLE_DEVELOPMENT_TEAM secret, uncomment this job.
+  # ios:
+  #   runs-on: macos-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: actions/setup-node@v4
+  #       with:
+  #         node-version: "22"
+  #     - uses: dtolnay/rust-toolchain@stable
+  #       with:
+  #         targets: aarch64-apple-ios
+  #     - run: npm ci
+  #     - run: npx tauri ios init
+  #     - name: Build iOS
+  #       run: npx tauri ios build --export-method debugging
+  #       env:
+  #         APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
+  #     - name: Package iOS artifacts
+  #       run: find src-tauri/gen/apple -name "*.app" -type d | head -1 | xargs -I{} tar czf /tmp/AirWSJT-X-ios.tar.gz {}
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: ios-build
+  #         path: /tmp/AirWSJT-X-ios.tar.gz
+  #     - uses: softprops/action-gh-release@v2
+  #       if: startsWith(github.ref, 'refs/tags/v')
+  #       with:
+  #         files: /tmp/AirWSJT-X-ios.tar.gz
+  #       env:
+  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   android:
     runs-on: ubuntu-latest
