@@ -96,6 +96,17 @@ jobs:
 
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      - name: Sign sidecar with entitlements
+        if: runner.os == 'macOS'
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          codesign --force --options runtime \
+            --entitlements src-tauri/Entitlements.plist \
+            --sign "$APPLE_SIGNING_IDENTITY" \
+            "src-tauri/binaries/${{ matrix.sidecar_name }}"
+          codesign -dv --verbose=2 "src-tauri/binaries/${{ matrix.sidecar_name }}"
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
