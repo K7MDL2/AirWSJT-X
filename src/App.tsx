@@ -269,6 +269,7 @@ export default function App() {
     : activeSourceState === "backoff" || activeSourceState === "connecting"
       ? "var(--yellow)"
       : "var(--red)";
+  const availableSources = sourceStatus ? Object.keys(sourceStatus.sources) : ["opensky", "dump1090"];
 
   const updateSourcePriority = (nextPriority: string[]) => {
     if (nextPriority.length === 0) return;
@@ -479,7 +480,7 @@ export default function App() {
                 {activeSourceMessage && <span style={{ color: "var(--text-muted)" }}> — {activeSourceMessage}</span>}
               </div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                {["opensky", "dump1090"].map((source) => {
+                {availableSources.map((source) => {
                   const priority = sourceStatus?.priority ?? ["opensky", "dump1090"];
                   const idx = priority.indexOf(source);
                   const enabled = idx >= 0;

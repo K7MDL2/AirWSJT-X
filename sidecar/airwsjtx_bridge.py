@@ -392,9 +392,7 @@ def _next_fallback_source(failed_source: str) -> str | None:
         return None
     idx = priority.index(failed_source)
     for offset in range(1, len(priority)):
-        candidate = priority[(idx + offset) % len(priority)]
-        if candidate != failed_source:
-            return candidate
+        return priority[(idx + offset) % len(priority)]
     return None
 
 
@@ -467,11 +465,12 @@ def _start_opensky_feed() -> None:
             _try_fallback("opensky", "OpenSky rate limited repeatedly (HTTP 429)")
 
     def _on_error(msg: str) -> None:
-        if "HTTP Error 429" not in msg:
-            _set_source_status("opensky", "error", msg)
+        if msg.startswith("HTTP Error 429"):
+            _emit({"event": "airscout_error", "data": {"source": "opensky", "message": msg}})
+            return
+        _set_source_status("opensky", "error", msg)
         _emit({"event": "airscout_error", "data": {"source": "opensky", "message": msg}})
-        if "HTTP Error 429" not in msg:
-            _try_fallback("opensky", msg)
+        _try_fallback("opensky", msg)
 
     lat_min, lon_min, lat_max, lon_max = bbox
     _opensky_rate_limit_count = 0
