@@ -39,7 +39,7 @@ class OpenSkyFeedBackoffTests(unittest.TestCase):
         feed._run()
 
         self.assertEqual(feed._stop.waits, [30.0, 60.0])  # type: ignore[attr-defined]
-        self.assertTrue(all("retrying in" in e for e in errors))
+        self.assertEqual(errors, [])
 
     def test_backoff_resets_after_successful_fetch(self) -> None:
         errors: list[str] = []
@@ -66,7 +66,7 @@ class OpenSkyFeedBackoffTests(unittest.TestCase):
         feed._run()
 
         self.assertEqual(feed._stop.waits, [10.0, 5.0, 10.0])  # type: ignore[attr-defined]
-        self.assertEqual(len(errors), 2)
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

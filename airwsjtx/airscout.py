@@ -146,10 +146,6 @@ class OpenSkyFeed:
                     wait_s = min(base_delay * (2 ** (consecutive_429 - 1)), self.max_backoff_s)
                     if self.on_rate_limited:
                         self.on_rate_limited(wait_s)
-                    if self.on_error:
-                        self.on_error(
-                            f"HTTP Error 429: OpenSky rate limit; retrying in {int(wait_s)}s"
-                        )
                 else:
                     consecutive_429 = 0
                     if self.on_error:
