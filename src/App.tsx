@@ -272,8 +272,8 @@ export default function App() {
   const myGrid = (myCallsign ? stationGridOverrides[myCallsign] : null) ?? wsjtxLive.de_grid;
   const selectedDxGrid = (dxCall ? stationGridOverrides[dxCall] : null) ?? dxGrid;
 
-  useEffect(() => { setMyGridInput(myGrid ?? ""); }, [myGrid]);
-  useEffect(() => { setDxGridInput(selectedDxGrid ?? ""); }, [selectedDxGrid]);
+  useEffect(() => { setMyGridInput(myGrid ?? ""); }, [myCallsign]);
+  useEffect(() => { setDxGridInput(selectedDxGrid ?? ""); }, [dxCall]);
 
   function savePortableGrid(callsign: string | null, grid: string | null) {
     if (!callsign) return;
@@ -387,8 +387,11 @@ export default function App() {
                 <button className="btn-secondary" style={{ fontSize: 10, padding: "2px 8px" }}
                   onClick={() => {
                     const grid = normalizeGrid(myGridInput);
+                    const locatorA = grid ?? wsjtxLive.de_grid;
                     savePortableGrid(myCallsign, grid);
-                    rpc("airscout_set_stations", { locator_a: grid ?? wsjtxLive.de_grid, locator_b: selectedDxGrid }).catch(() => {});
+                    if (selectedDxGrid) {
+                      rpc("airscout_set_stations", { locator_a: locatorA, locator_b: selectedDxGrid }).catch(() => {});
+                    }
                     addLog(`MY grid ${grid ? `override → ${grid}` : "reset to WSJT-X"}`);
                   }}>
                   Apply
