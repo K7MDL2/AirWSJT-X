@@ -418,8 +418,11 @@ export default function App() {
                       return;
                     }
                     const grid = normalizeGrid(dxGridInput);
+                    const locatorB = grid ?? dxGrid;
                     savePortableGrid(dxCall, grid);
-                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: grid ?? dxGrid }).catch(() => {});
+                    if (locatorB) {
+                      rpc("airscout_set_stations", { locator_a: myGrid, locator_b: locatorB }).catch(() => {});
+                    }
                     addLog(`DX grid ${grid ? `override → ${grid}` : "reset to callbook"}`);
                   }}>
                   Apply
@@ -454,7 +457,9 @@ export default function App() {
                   setDxCallsign(nextCall);
                   setDxGrid(lookedUpGrid);
                   rpc("set_station_calls", { call_a: myCallsign, call_b: nextCall }).catch(() => {});
-                  rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                  if (dxLocator) {
+                    rpc("airscout_set_stations", { locator_a: myGrid, locator_b: dxLocator }).catch(() => {});
+                  }
                   addLog(
                     dxLocator
                       ? `DX → ${nextCall} ${dxLocator}${info.name ? ` (${info.name})` : ""}`
