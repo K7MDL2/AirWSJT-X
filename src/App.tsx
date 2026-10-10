@@ -432,7 +432,7 @@ export default function App() {
                     }
                     const grid = normalizeGrid(dxGridInput);
                     const locatorB = grid ?? dxGrid;
-                    const locatorA = myGrid ?? wsjtxLive.de_grid;
+                    const locatorA = normalizeGrid(myGridInput) ?? wsjtxLive.de_grid;
                     savePortableGrid(dxCall, grid);
                     if (locatorA && locatorB) {
                       rpc("airscout_set_stations", { locator_a: locatorA, locator_b: locatorB }).catch(() => {});
@@ -454,7 +454,9 @@ export default function App() {
                     setDxCallsign(s.call); setDxGrid(s.grid.toUpperCase());
                     const dxLocator = stationGridOverrides[s.call] ?? s.grid.toUpperCase();
                     const locatorA = myGrid ?? wsjtxLive.de_grid;
-                    rpc("set_station_calls", { call_a: myCallsign, call_b: s.call }).catch(() => {});
+                    if (myCallsign) {
+                      rpc("set_station_calls", { call_a: myCallsign, call_b: s.call }).catch(() => {});
+                    }
                     if (locatorA && dxLocator) {
                       rpc("airscout_set_stations", { locator_a: locatorA, locator_b: dxLocator }).catch(() => {});
                     }
@@ -474,7 +476,9 @@ export default function App() {
                   const locatorA = myGrid ?? wsjtxLive.de_grid;
                   setDxCallsign(nextCall);
                   setDxGrid(lookedUpGrid);
-                  rpc("set_station_calls", { call_a: myCallsign, call_b: nextCall }).catch(() => {});
+                  if (myCallsign) {
+                    rpc("set_station_calls", { call_a: myCallsign, call_b: nextCall }).catch(() => {});
+                  }
                   if (locatorA && dxLocator) {
                     rpc("airscout_set_stations", { locator_a: locatorA, locator_b: dxLocator }).catch(() => {});
                   }
