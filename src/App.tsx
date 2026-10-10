@@ -51,6 +51,12 @@ interface AirscoutUpdate {
   total: number;
   station_a: string | null;
   station_b: string | null;
+  active_source?: string | null;
+}
+interface AirscoutSourceState {
+  active_source: string | null;
+  priority: string[];
+  sources: Record<string, { state: string; message: string | null }>;
 }
 
 // ─── Sidecar RPC ──────────────────────────────────────────────────────────────
@@ -94,6 +100,7 @@ export default function App() {
   });
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
+  const [sourceStatus, setSourceStatus] = useState<AirscoutSourceState | null>(null);
   const [rotatorConnected, setRotatorConnected] = useState(false);
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
@@ -160,6 +167,10 @@ export default function App() {
             addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
           } else if (evt === "airscout_update") {
             setAirscout(evtData as unknown as AirscoutUpdate);
+          } else if (evt === "airscout_source_status") {
+            setSourceStatus(evtData as unknown as AirscoutSourceState);
+          } else if (evt === "airscout_source_switched") {
+            addLog(`AirScout source switched: ${String(evtData.from)} → ${String(evtData.to)} (${String(evtData.reason)})`);
           } else if (evt === "airscout_feed_started") {
             addLog(`AirScout feed started: ${evtData.source}`);
           } else if (evt === "airscout_error") {
@@ -220,6 +231,12 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  useEffect(() => {
+    rpc("airscout_get_sources")
+      .then((s) => setSourceStatus(s as AirscoutSourceState))
+      .catch(() => {});
+  }, []);
+
   // Scroll log to bottom
   useEffect(() => {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
@@ -244,6 +261,21 @@ export default function App() {
   const state = status?.state ?? "idle";
   const stateColor = STATE_COLOR[state] ?? "#8b949e";
   const aircraft = airscout?.aircraft ?? [];
+  const activeSource = sourceStatus?.active_source ?? airscout?.active_source ?? null;
+  const activeSourceState = activeSource ? sourceStatus?.sources?.[activeSource]?.state ?? "unknown" : "stopped";
+  const activeSourceMessage = activeSource ? sourceStatus?.sources?.[activeSource]?.message ?? null : null;
+  const sourceDotColor = activeSourceState === "connected"
+    ? "var(--green)"
+    : activeSourceState === "backoff" || activeSourceState === "connecting"
+      ? "var(--yellow)"
+      : "var(--red)";
+
+  const updateSourcePriority = (nextPriority: string[]) => {
+    if (nextPriority.length === 0) return;
+    rpc("airscout_set_sources", { sources: nextPriority })
+      .then((s) => setSourceStatus(s as AirscoutSourceState))
+      .catch((e) => addLog(`AirScout source config: ${e}`));
+  };
 
   return (
     <div className="app">
@@ -290,6 +322,9 @@ export default function App() {
           )}
         </div>
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 10, color: sourceDotColor }}>
+            {activeSource ? "●" : "○"} {activeSource ?? "no source"}
+          </span>
           {rotatorConnected
             ? <span style={{ fontSize: 10, color: "var(--green)" }}>● rotctld</span>
             : <span style={{ fontSize: 10, color: "var(--red)" }}>○ rotctld</span>}
@@ -370,6 +405,7 @@ export default function App() {
               }}
               onUnlock={() => { setLockedPlane(null); rpc("unlock_aircraft", {}).catch(() => {}); }}
               onLockAircraft={(icao24) => rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`))}
+              sourceStatusText={activeSource ? `${activeSource} ${activeSourceState}` : undefined}
               aircraft={aircraft.slice(0, 5).map(ac => ({
                 icao24: ac.icao24, callsign: ac.callsign, altitude_ft: ac.altitude_ft,
                 scatter_score: ac.scatter_score, az_a: ac.az_a, el_a: ac.el_a,
@@ -435,9 +471,75 @@ export default function App() {
                 </button>
               </span>}
             </h3>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+              <div style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                Source: <span style={{ color: "var(--text)" }}>{activeSource ?? "not set"}</span>
+                {" · "}
+                <span style={{ color: sourceDotColor }}>{activeSourceState}</span>
+                {activeSourceMessage && <span style={{ color: "var(--text-muted)" }}> — {activeSourceMessage}</span>}
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {["opensky", "dump1090"].map((source) => {
+                  const priority = sourceStatus?.priority ?? ["opensky", "dump1090"];
+                  const idx = priority.indexOf(source);
+                  const enabled = idx >= 0;
+                  return (
+                    <div key={source} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                      <button
+                        style={{
+                          padding: "2px 6px", fontSize: 10, borderRadius: 3,
+                          background: enabled ? "rgba(63,185,80,0.12)" : "var(--surface)",
+                          color: enabled ? "var(--green)" : "var(--text-muted)",
+                          border: `1px solid ${enabled ? "var(--green)" : "var(--border)"}`,
+                        }}
+                        onClick={() => {
+                          if (enabled && priority.length > 1) {
+                            updateSourcePriority(priority.filter((s) => s !== source));
+                          } else if (!enabled) {
+                            updateSourcePriority([...priority, source]);
+                          }
+                        }}
+                      >
+                        {enabled ? "✓" : "+"} {source}
+                      </button>
+                      {enabled && (
+                        <>
+                          <button
+                            style={{ padding: "1px 5px", fontSize: 9, borderRadius: 3 }}
+                            disabled={idx <= 0}
+                            onClick={() => {
+                              if (idx <= 0) return;
+                              const next = [...priority];
+                              [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                              updateSourcePriority(next);
+                            }}
+                          >
+                            ↑
+                          </button>
+                          <button
+                            style={{ padding: "1px 5px", fontSize: 9, borderRadius: 3 }}
+                            disabled={idx < 0 || idx >= priority.length - 1}
+                            onClick={() => {
+                              if (idx < 0 || idx >= priority.length - 1) return;
+                              const next = [...priority];
+                              [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+                              updateSourcePriority(next);
+                            }}
+                          >
+                            ↓
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
             {aircraft.length === 0 ? (
               <div style={{ color: "var(--text-muted)", fontSize: 11 }}>
-                {dxCallsign ? "Waiting for aircraft data…" : "Select a DX station to start"}
+                {dxCallsign
+                  ? `Waiting for aircraft data from ${activeSource ?? "selected source"}…`
+                  : "Select a DX station to start"}
               </div>
             ) : (
               <table className="ac-table">
