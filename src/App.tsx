@@ -475,10 +475,20 @@ export default function App() {
     localStorage.setItem(ROTATOR_SPEECH_INTERVAL_KEY, String(rotatorSpeechIntervalSec));
   }, [rotatorSpeechIntervalSec]);
 
+  const manualSpeechTarget = lockedPlane
+    && Number.isFinite(lockedPlane.az_a)
+    && Number.isFinite(lockedPlane.el_a)
+    ? { az: lockedPlane.az_a, el: lockedPlane.el_a }
+    : (
+      rotatorTargetAz !== null && rotatorTargetEl !== null
+        ? { az: rotatorTargetAz, el: rotatorTargetEl }
+        : null
+    );
+
   const rotatorSpeechSource = uiMode === "manual"
     ? (
-      rotatorTargetAz !== null && rotatorTargetEl !== null
-        ? { az: rotatorTargetAz, el: rotatorTargetEl, source: "manual" as const, announceFirstUpdate: true }
+      manualSpeechTarget
+        ? { ...manualSpeechTarget, source: "manual" as const, announceFirstUpdate: true }
         : null
     )
     : (

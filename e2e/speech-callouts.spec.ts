@@ -99,6 +99,15 @@ test.describe("Speech callouts — rotator panel", () => {
     await expect(page.getByRole("button", { name: /Speech on/i })).toBeVisible();
   });
 
+  test("hovering the speech button previews azimuth and elevation when speech is on", async ({ page }) => {
+    await page.goto("/");
+    const toggle = page.getByRole("button", { name: /Speech on/i });
+    await toggle.hover();
+    await expect.poll(async () =>
+      page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
+    ).toBe("Azimuth 0, Elevation 0");
+  });
+
   test("manual mode announces target azimuth and elevation", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Manual", exact: true }).click();
@@ -106,6 +115,33 @@ test.describe("Speech callouts — rotator panel", () => {
     await expect.poll(async () =>
       page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
     ).toMatch(/^Azimuth \d+, Elevation 0$/);
+  });
+
+  test("manual mode announces locked aircraft updates without touching the arcs", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Manual", exact: true }).click();
+    await page.evaluate(() => {
+      const emit = (window as unknown as Record<string, (e: string, p: string) => void>).__tauriMockEmit;
+      if (!emit) return;
+      emit("sidecar-message", JSON.stringify({
+        event: "plane_locked",
+        data: {
+          icao24: "abc123",
+          callsign: "TEST123",
+          altitude_ft: 35000,
+          az_a: 63.2,
+          el_a: 1.4,
+          az_b: 180,
+          el_b: 5,
+          scatter_score: 0.42,
+          off_path_deg: 2,
+          state: "plane_locked",
+        },
+      }));
+    });
+    await expect.poll(async () =>
+      page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
+    ).toBe("Azimuth 63, Elevation 1");
   });
 
   test("speech synthesis cancel is called before each speak", async ({ page }) => {

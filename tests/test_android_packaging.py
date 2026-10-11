@@ -275,16 +275,26 @@ class AndroidCIWorkflowTests(unittest.TestCase):
 
     def test_workflow_runs_tauri_android_init(self) -> None:
         self.assertIn(
+            "tauri android init",
+            self.workflow_text,
+            "mobile.yml must initialize the full Tauri Android project before building APK flavors",
+        )
+        self.assertNotIn(
             "tauri android init --skip-targets-install",
             self.workflow_text,
-            "mobile.yml must initialize Android without reinstalling Rust targets already provisioned in CI",
+            "mobile.yml should not skip target installation when restoring the full Android flavor build",
         )
 
     def test_workflow_runs_tauri_android_build(self) -> None:
         self.assertIn(
+            "tauri android build --apk",
+            self.workflow_text,
+            "mobile.yml must build Android APKs in CI",
+        )
+        self.assertNotIn(
             "tauri android build --apk --target aarch64 armv7",
             self.workflow_text,
-            "mobile.yml must explicitly build only the ARM Android targets used by real devices",
+            "mobile.yml should not limit Android CI back to the reduced ARM-only target set",
         )
 
     def test_workflow_uploads_artifact(self) -> None:
@@ -310,16 +320,16 @@ class AndroidCIWorkflowTests(unittest.TestCase):
             "(required for 32-bit ARM devices)",
         )
 
-    def test_workflow_omits_emulator_rust_targets(self) -> None:
-        self.assertNotIn(
+    def test_workflow_restores_multiple_flavor_targets(self) -> None:
+        self.assertIn(
             "x86_64-linux-android",
             self.workflow_text,
-            "mobile.yml should not preinstall emulator-only Rust targets for release APKs",
+            "mobile.yml should restore the x86_64 Rust target so GitHub Actions can build the broader APK flavor set again",
         )
         self.assertNotIn(
             "i686-linux-android",
             self.workflow_text,
-            "mobile.yml should not build 32-bit x86 emulator targets for release APKs",
+            "mobile.yml should still avoid the 32-bit x86 emulator Rust target",
         )
 
     def test_workflow_runs_static_packaging_tests(self) -> None:
@@ -358,14 +368,19 @@ class AndroidCIWorkflowTests(unittest.TestCase):
 
     def test_workflow_uploads_signed_apk_output(self) -> None:
         self.assertIn(
-            "signed_apk_path=/tmp/AirWSJT-X-android.apk",
+            "signed_apk_dir=/tmp/android-signed",
             self.workflow_text,
-            "mobile.yml must expose the signed APK path as a step output",
+            "mobile.yml must expose the signed APK directory as a step output",
         )
         self.assertIn(
-            "path: ${{ steps.find_apk.outputs.signed_apk_path }}",
+            "signed_apk_list=/tmp/android-signed/apk-list.txt",
             self.workflow_text,
-            "mobile.yml must upload the signed APK artifact, not the unsigned Gradle output",
+            "mobile.yml must expose the list of signed APK flavors as a step output",
+        )
+        self.assertIn(
+            "path: ${{ steps.find_apks.outputs.signed_apk_dir }}/*.apk",
+            self.workflow_text,
+            "mobile.yml must upload all signed APK flavors, not just a single unsigned Gradle output",
         )
 
     def test_workflow_validates_zip_alignment(self) -> None:
