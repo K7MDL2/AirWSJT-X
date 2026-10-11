@@ -264,6 +264,14 @@ class IOSCIWorkflowTests(unittest.TestCase):
             "access the Keychain, which breaks credential storage",
         )
 
+    def test_workflow_applies_repo_icons_after_init(self) -> None:
+        self.assertIn(
+            "src-tauri/icons/ios/*.png",
+            self.workflow_text,
+            "mobile.yml must copy the repo icons over the template icons that "
+            "`tauri ios init` generates",
+        )
+
     def test_workflow_runs_static_packaging_tests(self) -> None:
         self.assertIn(
             "test_ios_packaging",

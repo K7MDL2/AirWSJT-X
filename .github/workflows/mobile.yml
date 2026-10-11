@@ -83,6 +83,9 @@ jobs:
       - name: Initialize Tauri iOS project
         run: npx tauri ios init
 
+      - name: Apply AirWSJT-X app icons
+        run: cp src-tauri/icons/ios/*.png src-tauri/gen/apple/Assets.xcassets/AppIcon.appiconset/
+
       - name: Build unsigned iOS Simulator app
         run: npx tauri ios build --debug --target aarch64-sim --no-sign --ci
 
