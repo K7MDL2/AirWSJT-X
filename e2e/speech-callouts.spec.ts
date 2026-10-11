@@ -82,20 +82,30 @@ test.describe("Speech callouts — rotator panel", () => {
     });
   });
 
-  test("speech checkbox is shown in rotator panel when connected", async ({ page }) => {
-    await page.addInitScript(() => {
-      Object.assign(window, { __mockState: "tracking" });
-    });
+  test("speech checkbox is shown in rotator panel before rotator connection", async ({ page }) => {
     await page.goto("/");
-    // Simulate rotator connected event
-    await page.evaluate(() => {
-      const emit = (window as unknown as Record<string, (e: string, p: string) => void>).__tauriMockEmit;
-      if (emit) {
-        emit("sidecar-message", JSON.stringify({ event: "rotator_connected", data: { host: "127.0.0.1", port: 4533 } }));
-        emit("sidecar-message", JSON.stringify({ event: "rotator_position", data: { azimuth: 90, elevation: 45 } }));
-      }
-    });
-    await expect(page.getByText("Speech").first()).toBeVisible();
+    await expect(page.getByText("Speech callouts").first()).toBeVisible();
+    await expect(page.getByRole("button", { name: /Speech on/i })).toBeVisible();
+  });
+
+  test("quick speech toggle can disable and re-enable announcements", async ({ page }) => {
+    await page.goto("/");
+    const toggle = page.getByRole("button", { name: /Speech on/i });
+    await toggle.click();
+    await expect(page.getByRole("button", { name: /Speech off/i })).toBeVisible();
+    const speechLabel = page.getByText("Speech callouts").locator("..");
+    await expect(speechLabel.locator('input[type="checkbox"]')).not.toBeChecked();
+    await page.getByRole("button", { name: /Speech off/i }).click();
+    await expect(page.getByRole("button", { name: /Speech on/i })).toBeVisible();
+  });
+
+  test("manual mode announces target azimuth and elevation", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("button", { name: "Manual", exact: true }).click();
+    await page.locator("svg").first().click({ position: { x: 85, y: 10 } });
+    await expect.poll(async () =>
+      page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
+    ).toMatch(/^Azimuth \d+, Elevation 0$/);
   });
 
   test("speech synthesis cancel is called before each speak", async ({ page }) => {

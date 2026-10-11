@@ -334,6 +334,7 @@ export default function RotatorPanel({
   const isManualMode = mode === "manual";
   const displayAz = targetAz ?? currentAz;
   const displayEl = targetEl ?? currentEl;
+  const speechSupported = isSpeechSupported();
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -351,6 +352,22 @@ export default function RotatorPanel({
             <span style={{ fontSize: 8 }}>{connected ? "●" : "○"}</span>
             {connected ? "rotctld connected" : "rotctld offline"}
           </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{
+              ...smBtn,
+              border: speechEnabled ? "1px solid #3fb950" : "1px solid #30363d",
+              background: speechEnabled ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.02)",
+              color: speechSupported ? (speechEnabled ? "#3fb950" : "#c9d1d9") : "#8b949e",
+            }}
+            aria-pressed={speechEnabled}
+            disabled={!speechSupported}
+            onClick={() => onSpeechEnabledChange(!speechEnabled)}
+            title={speechSupported ? "Toggle speech callouts" : "Web Speech API not available on this platform"}
+          >
+            {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
+          </button>
           {!connected && (
             <>
               <input value={host} onChange={e => setHost(e.target.value)}
@@ -377,6 +394,22 @@ export default function RotatorPanel({
             <span style={{ fontSize: 8 }}>●</span>
             Manual pointing mode
           </div>
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{
+              ...smBtn,
+              border: speechEnabled ? "1px solid #3fb950" : "1px solid #30363d",
+              background: speechEnabled ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.02)",
+              color: speechSupported ? (speechEnabled ? "#3fb950" : "#c9d1d9") : "#8b949e",
+            }}
+            aria-pressed={speechEnabled}
+            disabled={!speechSupported}
+            onClick={() => onSpeechEnabledChange(!speechEnabled)}
+            title={speechSupported ? "Toggle speech callouts" : "Web Speech API not available on this platform"}
+          >
+            {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
+          </button>
         </div>
       )}
 
@@ -502,55 +535,55 @@ export default function RotatorPanel({
       )}
 
       {/* Hint */}
-      {connected && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
-            padding: "8px 10px", borderRadius: 6, border: "1px solid #30363d",
-            background: "rgba(255,255,255,0.02)", fontSize: 11,
-          }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#c9d1d9" }}>
-              <input
-                type="checkbox"
-                checked={speechEnabled}
-                onChange={(e) => onSpeechEnabledChange(e.target.checked)}
-                disabled={!isSpeechSupported()}
-              />
-              Speech
-              {!isSpeechSupported() && (
-                <span style={{ fontSize: 10, color: "#8b949e" }} title="Web Speech API not available on this platform">(unavailable)</span>
-              )}
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#8b949e" }} title="Minimum azimuth/elevation change to announce">
-              Min Δ°
-              <input
-                type="number"
-                min={0.1}
-                step={0.1}
-                value={speechThresholdDeg}
-                style={{ ...numInput, width: 58 }}
-                onChange={(e) => onSpeechThresholdDegChange(parseFloat(e.target.value) || 0.1)}
-              />
-            </label>
-            <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#8b949e" }} title="Minimum time between speech announcements">
-              Min interval (s)
-              <input
-                type="number"
-                min={0}
-                step={0.1}
-                value={speechIntervalSec}
-                style={{ ...numInput, width: 58 }}
-                onChange={(e) => onSpeechIntervalSecChange(Math.max(0, parseFloat(e.target.value) || 0))}
-              />
-            </label>
-          </div>
-          <div style={{ fontSize: 11, color: "#8b949e" }}>
-            {isManualMode
-              ? "Use the compass or arc for quick hand-pointing. Orange = target · Blue = current."
-              : "Click the compass or elevation arc to set target position. Orange dashed = target · Blue solid = current."}
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "8px 10px", borderRadius: 6, border: "1px solid #30363d",
+          background: "rgba(255,255,255,0.02)", fontSize: 11,
+        }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, color: "#c9d1d9" }}>
+            <input
+              type="checkbox"
+              checked={speechEnabled}
+              onChange={(e) => onSpeechEnabledChange(e.target.checked)}
+              disabled={!speechSupported}
+            />
+            Speech callouts
+            {!speechSupported && (
+              <span style={{ fontSize: 10, color: "#8b949e" }} title="Web Speech API not available on this platform">(unavailable)</span>
+            )}
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#8b949e" }} title="Minimum azimuth/elevation change to announce">
+            Min Δ°
+            <input
+              type="number"
+              min={0.1}
+              step={0.1}
+              value={speechThresholdDeg}
+              style={{ ...numInput, width: 58 }}
+              onChange={(e) => onSpeechThresholdDegChange(parseFloat(e.target.value) || 0.1)}
+            />
+          </label>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, color: "#8b949e" }} title="Minimum time between speech announcements">
+            Min interval (s)
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={speechIntervalSec}
+              style={{ ...numInput, width: 58 }}
+              onChange={(e) => onSpeechIntervalSecChange(Math.max(0, parseFloat(e.target.value) || 0))}
+            />
+          </label>
         </div>
-      )}
+        <div style={{ fontSize: 11, color: "#8b949e" }}>
+          {isManualMode
+            ? "Use the compass or arc for quick hand-pointing. Speech callouts announce the target azimuth/elevation. Orange = target · Blue = current."
+            : connected
+              ? "Click the compass or elevation arc to set target position. Orange dashed = target · Blue solid = current."
+              : "Enable speech now and the app will announce live azimuth/elevation once rotctld reports position updates."}
+        </div>
+      </div>
       {!connected && isManualMode && (
         <div style={{ fontSize: 11, color: "#8b949e" }}>
           Manual mode does not require rotctld; use the compass and arc to keep the antenna aligned.
