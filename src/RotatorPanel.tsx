@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { isSpeechSupported } from "./lib/speech";
+import { useEffect, useRef, useState } from "react";
+import { isSpeechSupported, speak } from "./lib/speech";
 
 interface RotatorPanelProps {
   currentAz: number;
@@ -298,6 +298,7 @@ export default function RotatorPanel({
   const [manualEl, setManualEl] = useState(currentEl.toFixed(1));
   const [host, setHost] = useState("127.0.0.1");
   const [port, setPort] = useState("4533");
+  const lastSpeechPreviewAtRef = useRef(0);
 
   // Sync manual fields when target changes
   useEffect(() => {
@@ -336,6 +337,18 @@ export default function RotatorPanel({
   const displayEl = targetEl ?? currentEl;
   const speechSupported = isSpeechSupported();
 
+  function handleSpeechPreview() {
+    if (!speechSupported || !speechEnabled) return;
+    const now = Date.now();
+    if (now - lastSpeechPreviewAtRef.current < 1200) return;
+    lastSpeechPreviewAtRef.current = now;
+    speak(`Azimuth ${Math.round(displayAz)}, Elevation ${Math.round(displayEl)}`);
+  }
+
+  const speechToggleTitle = speechSupported
+    ? "Toggle speech callouts. Hover to preview the current azimuth and elevation."
+    : "Web Speech API not available on this platform";
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
@@ -364,7 +377,9 @@ export default function RotatorPanel({
             aria-pressed={speechEnabled}
             disabled={!speechSupported}
             onClick={() => onSpeechEnabledChange(!speechEnabled)}
-            title={speechSupported ? "Toggle speech callouts" : "Web Speech API not available on this platform"}
+            onMouseEnter={handleSpeechPreview}
+            onFocus={handleSpeechPreview}
+            title={speechToggleTitle}
           >
             {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
           </button>
@@ -406,7 +421,9 @@ export default function RotatorPanel({
             aria-pressed={speechEnabled}
             disabled={!speechSupported}
             onClick={() => onSpeechEnabledChange(!speechEnabled)}
-            title={speechSupported ? "Toggle speech callouts" : "Web Speech API not available on this platform"}
+            onMouseEnter={handleSpeechPreview}
+            onFocus={handleSpeechPreview}
+            title={speechToggleTitle}
           >
             {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
           </button>
@@ -578,10 +595,10 @@ export default function RotatorPanel({
         </div>
         <div style={{ fontSize: 11, color: "#8b949e" }}>
           {isManualMode
-            ? "Use the compass or arc for quick hand-pointing. Speech callouts announce the target azimuth/elevation. Orange = target · Blue = current."
+            ? "Use the compass or arc for quick hand-pointing. Speech callouts announce the target azimuth/elevation, and hovering Speech on previews the current values. Orange = target · Blue = current."
             : connected
               ? "Click the compass or elevation arc to set target position. Orange dashed = target · Blue solid = current."
-              : "Enable speech now and the app will announce live azimuth/elevation once rotctld reports position updates."}
+              : "Enable speech now and the app will announce live azimuth/elevation once rotctld reports position updates. Hovering Speech on previews the current values."}
         </div>
       </div>
       {!connected && isManualMode && (

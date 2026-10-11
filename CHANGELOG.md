@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.10
+
+### Fixed
+- Manual desktop speech callouts now follow the tracked aircraft azimuth/elevation in **Manual** mode even when the operator does not touch the pointing arcs.
+- The desktop **Speech on** toggle now previews the current azimuth/elevation on hover so Windows users can confirm audio output immediately.
+
+### Changed
+- Restored the broader Android GitHub Actions APK flavor build so release automation signs and uploads the full generated APK set instead of the reduced ARM-only path.
+
+### Validation
+- `npm run build`
+- `python -m unittest discover -s tests -v`
+- `npx playwright test`
+
 ## 0.3.9
 
 ### Fixed

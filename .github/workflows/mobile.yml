@@ -105,7 +105,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-linux-android,armv7-linux-androideabi
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
 
       - name: Install Android NDK
         run: |
@@ -118,24 +118,23 @@ jobs:
 
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Initialize Tauri Android
-        run: npx tauri android init --skip-targets-install
+        run: npx tauri android init
 
-      - name: Build Android APK
-        run: npx tauri android build --apk --target aarch64 armv7
+      - name: Build Android APK flavors
+        run: npx tauri android build --apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Locate, align, and sign APK ──────────────────────────────────────
-      - name: Find and sign APK
-        id: find_apk
+      # ── Locate, align, and sign APKs ─────────────────────────────────────
+      - name: Find and sign APK flavors
+        id: find_apks
         run: |
-          APK=$(find src-tauri/gen/android -name "*.apk" -type f | head -1)
-          if [ -z "$APK" ]; then
-            echo "No APK found under src-tauri/gen/android"
+          mapfile -t APKS < <(find src-tauri/gen/android/app/build/outputs/apk -name "*-release-unsigned.apk" -type f | sort)
+          if [ "${#APKS[@]}" -eq 0 ]; then
+            echo "No release APKs found under src-tauri/gen/android/app/build/outputs/apk"
             find src-tauri/gen/android -type f | head -20
             exit 1
           fi
-          echo "apk_path=$APK" >> $GITHUB_OUTPUT
 
           # Generate a debug keystore for signing
           keytool -genkeypair -v \
@@ -145,29 +144,44 @@ jobs:
             -storepass android -keypass android \
             -dname "CN=Android Debug,O=Android,C=US"
 
-          # Zipalign
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | sort -V | tail -1)"
-          "${BUILD_TOOLS}/zipalign" -f 4 "$APK" /tmp/AirWSJT-X-aligned.apk
+          mkdir -p /tmp/android-signed
+          : > /tmp/android-signed/apk-list.txt
 
-          # Sign the APK
-          "${BUILD_TOOLS}/apksigner" sign \
-            --ks /tmp/debug.keystore \
-            --ks-key-alias androiddebugkey \
-            --ks-pass pass:android \
-            --key-pass pass:android \
-            --out /tmp/AirWSJT-X-android.apk \
-            /tmp/AirWSJT-X-aligned.apk
+          for APK in "${APKS[@]}"; do
+            NAME=$(basename "$APK")
+            BASE="${NAME%-unsigned.apk}"
+            ALIGNED="/tmp/${BASE}-aligned.apk"
+            SIGNED="/tmp/android-signed/${BASE}.apk"
 
-          # Verify
-          "${BUILD_TOOLS}/apksigner" verify /tmp/AirWSJT-X-android.apk
-          echo "signed_apk_path=/tmp/AirWSJT-X-android.apk" >> $GITHUB_OUTPUT
-          echo "APK found and signed: $APK"
+            "${BUILD_TOOLS}/zipalign" -f 4 "$APK" "$ALIGNED"
+
+            "${BUILD_TOOLS}/apksigner" sign \
+              --ks /tmp/debug.keystore \
+              --ks-key-alias androiddebugkey \
+              --ks-pass pass:android \
+              --key-pass pass:android \
+              --out "$SIGNED" \
+              "$ALIGNED"
+
+            "${BUILD_TOOLS}/apksigner" verify "$SIGNED"
+            echo "$SIGNED" >> /tmp/android-signed/apk-list.txt
+            echo "APK found and signed: $APK -> $SIGNED"
+          done
+
+          echo "signed_apk_dir=/tmp/android-signed" >> $GITHUB_OUTPUT
+          echo "signed_apk_list=/tmp/android-signed/apk-list.txt" >> $GITHUB_OUTPUT
 
       # ── Post-build APK validation ─────────────────────────────────────────
-      - name: Validate APK — manifest, version, signing, architectures
+      - name: Validate APK flavors — manifest, version, signing, architectures
         run: |
           set -euo pipefail
-          APK="${{ steps.find_apk.outputs.signed_apk_path }}"
+          mapfile -t APKS < "${{ steps.find_apks.outputs.signed_apk_list }}"
+          if [ "${#APKS[@]}" -lt 2 ]; then
+            echo "Expected multiple APK flavors, found ${#APKS[@]}"
+            printf '%s\n' "${APKS[@]}"
+            exit 1
+          fi
 
           AAPT2=$(find "$ANDROID_HOME/build-tools" -name "aapt2"     | sort -V | tail -1)
           APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name "apksigner" | sort -V | tail -1)
@@ -175,9 +189,6 @@ jobs:
           echo "aapt2:     $AAPT2"
           echo "apksigner: $APKSIGNER"
           echo "zipalign:  $ZIPALIGN"
-
-          BADGING=$("$AAPT2" dump badging "$APK")
-          echo "$BADGING"
 
           PASS=0; FAIL=0
           check() {
@@ -189,90 +200,111 @@ jobs:
             fi
           }
 
-          # 1. Package name matches Tauri identifier
           EXPECTED_PKG=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['identifier'])")
-          ACTUAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+" || true)
-          if [ "$ACTUAL_PKG" = "$EXPECTED_PKG" ]; then
-            check "Package name = $EXPECTED_PKG" ok
-          else
-            check "Package name = $EXPECTED_PKG" "got '$ACTUAL_PKG'"
-          fi
-
-          # 2. versionName present
-          VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+" || true)
-          if [ -n "$VNAME" ]; then
-            check "versionName present ($VNAME)" ok
-          else
-            check "versionName present" "missing or empty"
-          fi
-
-          # 3. versionName matches tauri.conf.json (source of truth for version)
           EXPECTED_VER=$(python3 -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])")
-          if [ "$VNAME" = "$EXPECTED_VER" ]; then
-            check "versionName matches tauri.conf.json ($EXPECTED_VER)" ok
-          else
-            check "versionName matches tauri.conf.json ($EXPECTED_VER)" "APK has '$VNAME'"
-          fi
+          for APK in "${APKS[@]}"; do
+            NAME=$(basename "$APK")
+            echo ""
+            echo "Validating $NAME"
+            BADGING=$("$AAPT2" dump badging "$APK")
+            echo "$BADGING"
 
-          # 4. versionCode present
-          VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+" || true)
-          if [ -n "$VCODE" ]; then
-            check "versionCode present ($VCODE)" ok
-          else
-            check "versionCode present" "missing"
-          fi
+            ACTUAL_PKG=$(echo "$BADGING" | grep -oP "package: name='\K[^']+" || true)
+            if [ "$ACTUAL_PKG" = "$EXPECTED_PKG" ]; then
+              check "$NAME package name = $EXPECTED_PKG" ok
+            else
+              check "$NAME package name = $EXPECTED_PKG" "got '$ACTUAL_PKG'"
+            fi
 
-          # 5. minSdkVersion present
-          MIN_SDK=$(echo "$BADGING" | grep -oP "minSdkVersion:'\K[0-9]+" || true)
-          if [ -n "$MIN_SDK" ]; then
-            check "minSdkVersion present ($MIN_SDK)" ok
-          else
-            check "minSdkVersion present" "missing"
-          fi
+            VNAME=$(echo "$BADGING" | grep -oP "versionName='\K[^']+" || true)
+            if [ -n "$VNAME" ]; then
+              check "$NAME versionName present ($VNAME)" ok
+            else
+              check "$NAME versionName present" "missing or empty"
+            fi
 
-          # 6. targetSdkVersion present
-          TGT_SDK=$(echo "$BADGING" | grep -oP "targetSdkVersion:'\K[0-9]+" || true)
-          if [ -n "$TGT_SDK" ]; then
-            check "targetSdkVersion present ($TGT_SDK)" ok
-          else
-            check "targetSdkVersion present" "missing"
-          fi
+            if [ "$VNAME" = "$EXPECTED_VER" ]; then
+              check "$NAME versionName matches tauri.conf.json ($EXPECTED_VER)" ok
+            else
+              check "$NAME versionName matches tauri.conf.json ($EXPECTED_VER)" "APK has '$VNAME'"
+            fi
 
-          # 7. APK is signed (debug signing is acceptable for CI)
-          if "$APKSIGNER" verify --verbose "$APK" 2>&1 | grep -q "Verified using"; then
-            check "APK is signed" ok
-          else
-            check "APK is signed" "apksigner verify failed — APK is unsigned or has invalid signature"
-          fi
+            VCODE=$(echo "$BADGING" | grep -oP "versionCode='\K[^']+" || true)
+            if [ -n "$VCODE" ]; then
+              check "$NAME versionCode present ($VCODE)" ok
+            else
+              check "$NAME versionCode present" "missing"
+            fi
 
-          # 8. APK is zip-aligned (required for efficient mmap; some installers reject unaligned APKs)
-          if "$ZIPALIGN" -c -v 4 "$APK" > /dev/null 2>&1; then
-            check "APK is zip-aligned (4-byte)" ok
-          else
-            check "APK is zip-aligned (4-byte)" "zipalign check failed"
-          fi
+            MIN_SDK=$(echo "$BADGING" | grep -oP "minSdkVersion:'\K[0-9]+" || true)
+            if [ -n "$MIN_SDK" ]; then
+              check "$NAME minSdkVersion present ($MIN_SDK)" ok
+            else
+              check "$NAME minSdkVersion present" "missing"
+            fi
 
-          # 9. arm64-v8a native library present (dominant modern Android architecture)
-          if unzip -l "$APK" | grep -q "lib/arm64-v8a/"; then
-            check "arm64-v8a native library present" ok
-          else
-            check "arm64-v8a native library present" "missing — app will not run on most modern devices"
-          fi
+            TGT_SDK=$(echo "$BADGING" | grep -oP "targetSdkVersion:'\K[0-9]+" || true)
+            if [ -n "$TGT_SDK" ]; then
+              check "$NAME targetSdkVersion present ($TGT_SDK)" ok
+            else
+              check "$NAME targetSdkVersion present" "missing"
+            fi
 
-          # 10. armeabi-v7a native library present (older/32-bit Android devices)
-          if unzip -l "$APK" | grep -q "lib/armeabi-v7a/"; then
-            check "armeabi-v7a native library present" ok
-          else
-            check "armeabi-v7a native library present" "missing — app will not run on 32-bit ARM devices"
-          fi
+            if "$APKSIGNER" verify --verbose "$APK" 2>&1 | grep -q "Verified using"; then
+              check "$NAME is signed" ok
+            else
+              check "$NAME is signed" "apksigner verify failed — APK is unsigned or has invalid signature"
+            fi
 
-          # 11. APK size sanity (catches silent empty-build failures)
-          SIZE=$(stat -c%s "$APK")
-          if [ "$SIZE" -ge 100000 ]; then
-            check "APK size >= 100 KB ($SIZE bytes)" ok
-          else
-            check "APK size >= 100 KB" "only $SIZE bytes — possible empty/corrupt build"
-          fi
+            if "$ZIPALIGN" -c -v 4 "$APK" > /dev/null 2>&1; then
+              check "$NAME is zip-aligned (4-byte)" ok
+            else
+              check "$NAME is zip-aligned (4-byte)" "zipalign check failed"
+            fi
+
+            case "$NAME" in
+              *universal*)
+                if unzip -l "$APK" | grep -q "lib/arm64-v8a/"; then
+                  check "$NAME arm64-v8a native library present" ok
+                else
+                  check "$NAME arm64-v8a native library present" "missing"
+                fi
+                if unzip -l "$APK" | grep -q "lib/armeabi-v7a/"; then
+                  check "$NAME armeabi-v7a native library present" ok
+                else
+                  check "$NAME armeabi-v7a native library present" "missing"
+                fi
+                ;;
+              *arm64*)
+                if unzip -l "$APK" | grep -q "lib/arm64-v8a/"; then
+                  check "$NAME arm64-v8a native library present" ok
+                else
+                  check "$NAME arm64-v8a native library present" "missing"
+                fi
+                ;;
+              *arm-release*)
+                if unzip -l "$APK" | grep -q "lib/armeabi-v7a/"; then
+                  check "$NAME armeabi-v7a native library present" ok
+                else
+                  check "$NAME armeabi-v7a native library present" "missing"
+                fi
+                ;;
+              *x86_64*)
+                if unzip -l "$APK" | grep -q "lib/x86_64/"; then
+                  check "$NAME x86_64 native library present" ok
+                else
+                  check "$NAME x86_64 native library present" "missing"
+                fi
+                ;;
+            esac
+
+            SIZE=$(stat -c%s "$APK")
+            if [ "$SIZE" -ge 100000 ]; then
+              check "$NAME size >= 100 KB ($SIZE bytes)" ok
+            else
+              check "$NAME size >= 100 KB" "only $SIZE bytes — possible empty/corrupt build"
+            fi
+          done
 
           echo ""
           echo "Results: $PASS passed, $FAIL failed"
@@ -280,16 +312,16 @@ jobs:
 
       # ── Artifacts & release ───────────────────────────────────────────────
       - name: Upload Android artifact
-        if: always() && steps.find_apk.outcome == 'success'
+        if: always() && steps.find_apks.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
           name: android-build
-          path: ${{ steps.find_apk.outputs.signed_apk_path }}
+          path: ${{ steps.find_apks.outputs.signed_apk_dir }}/*.apk
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v3
         with:
-          files: ${{ steps.find_apk.outputs.signed_apk_path }}
+          files: ${{ steps.find_apks.outputs.signed_apk_dir }}/*.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
