@@ -1,13 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "AirWSJT-X",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "identifier": "com.airwsjtx.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build:safe"
   },
   "app": {
     "windows": [
