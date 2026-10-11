@@ -1,0 +1,8 @@
+{
+  "identifier": "us.ad7np.airwsjt-x",
+  "bundle": {
+    "macOS": {
+      "entitlements": "entitlements-mas.plist"
+    }
+  }
+}
