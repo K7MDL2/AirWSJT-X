@@ -272,14 +272,17 @@ class IOSCIWorkflowTests(unittest.TestCase):
             "`tauri ios init` generates",
         )
 
-    def test_ios_identifier_override_matches_app_store_connect(self) -> None:
-        path = Path(__file__).resolve().parent.parent / "src-tauri" / "tauri.ios.conf.json"
-        override = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(
-            override["identifier"],
-            "us.ad7np.airwsjt-x",
-            "iOS bundle ID must match the App Store Connect app record",
-        )
+    def test_apple_platforms_use_app_store_connect_identifier(self) -> None:
+        # Android package names cannot contain hyphens, so the base identifier
+        # stays hyphen-free and Apple platforms override it.
+        src_tauri = Path(__file__).resolve().parent.parent / "src-tauri"
+        for name in ("tauri.ios.conf.json", "tauri.macos.conf.json"):
+            override = json.loads((src_tauri / name).read_text(encoding="utf-8"))
+            self.assertEqual(
+                override["identifier"],
+                "us.ad7np.airwsjt-x",
+                f"{name} must match the App Store Connect app record",
+            )
 
     def test_workflow_runs_static_packaging_tests(self) -> None:
         self.assertIn(
