@@ -14,6 +14,12 @@ import { isSpeechSupported, speak } from "./lib/speech";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
+type CompassPermissionState = "unsupported" | "needs-permission" | "listening" | "active" | "denied";
+
+type OrientationEventWithCompass = DeviceOrientationEvent & {
+  webkitCompassHeading?: number;
+};
+
 interface MobileAircraft {
   icao24: string;
   callsign: string;
@@ -28,14 +34,46 @@ interface MobileAircraft {
   distance_km: number;
 }
 
+function normalizeDegrees(value: number): number {
+  return ((value % 360) + 360) % 360;
+}
+
+function signedHeadingDelta(target: number, current: number): number {
+  return ((target - current + 540) % 360) - 180;
+}
+
+function getScreenOrientationAngle(): number {
+  if (typeof window === "undefined") return 0;
+  if (typeof window.screen?.orientation?.angle === "number") {
+    return normalizeDegrees(window.screen.orientation.angle);
+  }
+  const legacyWindow = window as Window & { orientation?: number };
+  if (typeof legacyWindow.orientation === "number") {
+    return normalizeDegrees(legacyWindow.orientation);
+  }
+  return 0;
+}
+
+function extractCompassHeading(event: OrientationEventWithCompass): number | null {
+  if (typeof event.webkitCompassHeading === "number" && Number.isFinite(event.webkitCompassHeading)) {
+    return normalizeDegrees(event.webkitCompassHeading);
+  }
+  if (typeof event.alpha === "number" && Number.isFinite(event.alpha)) {
+    return normalizeDegrees(event.alpha - getScreenOrientationAngle());
+  }
+  return null;
+}
+
 // ─── Compass Rose (reused design from RotatorPanel) ─────────────────────────
 
 function CompassRose({
   bearing,
+  deviceHeading = null,
   size = 220,
   aircraft,
 }: {
   bearing: number | null;
+  deviceHeading?: number | null;
   size?: number;
   aircraft?: { az: number; el: number; callsign: string }[];
 }) {
@@ -55,20 +93,28 @@ function CompassRose({
     const isMid = i % 30 === 0;
     const tickOuter = outerR;
     const tickInner = isMajor ? outerR - 14 : isMid ? outerR - 8 : outerR - 4;
-    const p1 = azToXY(i, tickOuter);
-    const p2 = azToXY(i, tickInner);
+    const renderAz = deviceHeading === null ? i : normalizeDegrees(i - deviceHeading);
+    const p1 = azToXY(renderAz, tickOuter);
+    const p2 = azToXY(renderAz, tickInner);
     ticks.push(
       <line key={i} x1={p1.x} y1={p1.y} x2={p2.x} y2={p2.y}
         stroke={isMajor ? "#58a6ff" : "#30363d"} strokeWidth={isMajor ? 1.5 : 0.8} />
     );
   }
   for (let ci = 0; ci < 4; ci++) {
-    const lp = azToXY(ci * 90, outerR - 24);
+    const renderAz = deviceHeading === null ? ci * 90 : normalizeDegrees(ci * 90 - deviceHeading);
+    const lp = azToXY(renderAz, outerR - 24);
     ticks.push(
       <text key={`c${ci}`} x={lp.x} y={lp.y} textAnchor="middle" dominantBaseline="central"
         fontSize={14} fill="#c9d1d9" fontWeight={700}>{cardinals[ci]}</text>
     );
   }
+
+  const displayBearing = bearing === null
+    ? null
+    : deviceHeading === null
+      ? normalizeDegrees(bearing)
+      : normalizeDegrees(bearing - deviceHeading);
 
   return (
     <svg width={size} height={size} style={{ userSelect: "none" }}>
@@ -76,7 +122,8 @@ function CompassRose({
       <circle cx={cx} cy={cy} r={innerR} fill="none" stroke="#1c2128" strokeWidth={1} />
       {ticks}
       {aircraft?.map((ac, idx) => {
-        const p = azToXY(ac.az, innerR * 0.7);
+        const renderAz = deviceHeading === null ? ac.az : normalizeDegrees(ac.az - deviceHeading);
+        const p = azToXY(renderAz, innerR * 0.7);
         return (
           <g key={idx}>
             <circle cx={p.x} cy={p.y} r={4} fill="#d29922" opacity={0.8} />
@@ -86,22 +133,28 @@ function CompassRose({
           </g>
         );
       })}
-      {bearing !== null && (
+      {displayBearing !== null && (
         <g>
           <line
             x1={cx} y1={cy}
-            x2={azToXY(bearing, innerR - 8).x}
-            y2={azToXY(bearing, innerR - 8).y}
+            x2={azToXY(displayBearing, innerR - 8).x}
+            y2={azToXY(displayBearing, innerR - 8).y}
             stroke="#58a6ff" strokeWidth={3} strokeLinecap="round"
           />
-          <circle cx={azToXY(bearing, innerR - 8).x} cy={azToXY(bearing, innerR - 8).y}
+          <circle cx={azToXY(displayBearing, innerR - 8).x} cy={azToXY(displayBearing, innerR - 8).y}
             r={5} fill="#58a6ff" />
         </g>
       )}
+      {deviceHeading !== null && (
+        <polygon
+          points={`${cx},${cy - innerR - 4} ${cx - 8},${cy - innerR + 12} ${cx + 8},${cy - innerR + 12}`}
+          fill="#f85149"
+        />
+      )}
       <circle cx={cx} cy={cy} r={6} fill="#161b22" stroke="#58a6ff" strokeWidth={2} />
-      {bearing !== null && (
+      {displayBearing !== null && (
         <text x={cx} y={cy + innerR * 0.56} textAnchor="middle" fontSize={24} fontWeight={700}
-          fill="#c9d1d9" fontFamily="monospace">{bearing.toFixed(1)}°</text>
+          fill="#c9d1d9" fontFamily="monospace">{displayBearing.toFixed(1)}°</text>
       )}
     </svg>
   );
@@ -209,6 +262,12 @@ export default function MobileApp() {
   const [showSettings, setShowSettings] = useState(false);
   const [aircraft, setAircraft] = useState<MobileAircraft[]>([]);
   const [selectedAc, setSelectedAc] = useState<MobileAircraft | null>(null);
+  const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
+  const [compassPermissionState, setCompassPermissionState] = useState<CompassPermissionState>("unsupported");
+  const [viewport, setViewport] = useState(() => ({
+    width: typeof window !== "undefined" ? window.innerWidth : 390,
+    height: typeof window !== "undefined" ? window.innerHeight : 844,
+  }));
   const [status, setStatus] = useState("Configure your station");
   const [lastUpdate, setLastUpdate] = useState<number | null>(null);
   const [dbStatus, setDbStatus] = useState<DbStatus | null>(null);
@@ -218,6 +277,7 @@ export default function MobileApp() {
   const accountLog = useCallback((message: string) => setStatus(message), []);
   const pollerRef = useRef<OpenSkyPoller | null>(null);
   const speechLastRef = useRef<{ az: number; el: number; at: number; icao24: string } | null>(null);
+  const compassHeadingRef = useRef<number | null>(null);
 
   const saveSettings = useCallback((next: MobileSettings) => {
     setSettings(next);
@@ -225,10 +285,91 @@ export default function MobileApp() {
   }, []);
 
   const hasStation = settings.myGrid.length >= 4;
+  const isLandscape = viewport.width > viewport.height;
+  const trackedAc = selectedAc ?? aircraft[0] ?? null;
+
+  const enableCompass = useCallback(async () => {
+    if (typeof window === "undefined" || typeof window.DeviceOrientationEvent === "undefined") {
+      setCompassPermissionState("unsupported");
+      return;
+    }
+    const orientationApi = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied">;
+    };
+    if (typeof orientationApi.requestPermission === "function") {
+      try {
+        const permission = await orientationApi.requestPermission();
+        if (permission !== "granted") {
+          setCompassPermissionState("denied");
+          return;
+        }
+      } catch {
+        setCompassPermissionState("denied");
+        return;
+      }
+    }
+    setCompassPermissionState("listening");
+  }, []);
 
   useEffect(() => {
     getDbStatus().then(setDbStatus).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const syncViewport = () => {
+      setViewport({ width: window.innerWidth, height: window.innerHeight });
+    };
+
+    syncViewport();
+    window.addEventListener("resize", syncViewport);
+    window.screen.orientation?.addEventListener?.("change", syncViewport);
+
+    return () => {
+      window.removeEventListener("resize", syncViewport);
+      window.screen.orientation?.removeEventListener?.("change", syncViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.DeviceOrientationEvent === "undefined") {
+      setCompassPermissionState("unsupported");
+      return;
+    }
+    const orientationApi = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
+      requestPermission?: () => Promise<"granted" | "denied">;
+    };
+    if (typeof orientationApi.requestPermission === "function") {
+      setCompassPermissionState((current) => current === "denied" ? current : "needs-permission");
+      return;
+    }
+    setCompassPermissionState((current) => current === "unsupported" ? "listening" : current);
+  }, []);
+
+  useEffect(() => {
+    if (compassPermissionState !== "listening" && compassPermissionState !== "active") return;
+
+    const onOrientation = (event: Event) => {
+      const heading = extractCompassHeading(event as OrientationEventWithCompass);
+      if (heading === null) return;
+      const previous = compassHeadingRef.current;
+      const smoothed = previous === null
+        ? heading
+        : normalizeDegrees(previous + signedHeadingDelta(heading, previous) * 0.35);
+      compassHeadingRef.current = smoothed;
+      setDeviceHeading(smoothed);
+      setCompassPermissionState("active");
+    };
+
+    window.addEventListener("deviceorientationabsolute", onOrientation, true);
+    window.addEventListener("deviceorientation", onOrientation, true);
+
+    return () => {
+      window.removeEventListener("deviceorientationabsolute", onOrientation, true);
+      window.removeEventListener("deviceorientation", onOrientation, true);
+    };
+  }, [compassPermissionState]);
 
   useEffect(() => {
     pollerRef.current?.stop();
@@ -306,18 +447,18 @@ export default function MobileApp() {
 
   // Speech
   useEffect(() => {
-    if (!settings.speechEnabled || !selectedAc) return;
+    if (!settings.speechEnabled || !trackedAc) return;
     if (!isSpeechSupported()) return;
     const now = Date.now();
     const last = speechLastRef.current;
     // When the selected aircraft changes, bypass the time cooldown so the new
     // aircraft is announced immediately (the position-delta guard still applies).
-    const sameAircraft = last?.icao24 === selectedAc.icao24;
+    const sameAircraft = last?.icao24 === trackedAc.icao24;
     if (sameAircraft && last && now - last.at < 3000) return;
-    if (sameAircraft && last && Math.abs(selectedAc.az - last.az) < 3 && Math.abs(selectedAc.el - last.el) < 2) return;
-    speak(`${selectedAc.callsign}, Azimuth ${Math.round(selectedAc.az)}, Elevation ${Math.round(selectedAc.el)}`);
-    speechLastRef.current = { az: selectedAc.az, el: selectedAc.el, at: now, icao24: selectedAc.icao24 };
-  }, [selectedAc, settings.speechEnabled]);
+    if (sameAircraft && last && Math.abs(trackedAc.az - last.az) < 3 && Math.abs(trackedAc.el - last.el) < 2) return;
+    speak(`${trackedAc.callsign}, Azimuth ${Math.round(trackedAc.az)}, Elevation ${Math.round(trackedAc.el)}`);
+    speechLastRef.current = { az: trackedAc.az, el: trackedAc.el, at: now, icao24: trackedAc.icao24 };
+  }, [trackedAc, settings.speechEnabled]);
 
   // Update selected aircraft position from latest data
   useEffect(() => {
@@ -341,10 +482,30 @@ export default function MobileApp() {
   const compassAircraft = aircraft.slice(0, 12).map((a) => ({
     az: a.az, el: a.el, callsign: a.callsign,
   }));
-  const viewportWidth = typeof window !== "undefined" ? window.innerWidth : 360;
-  const compassSize = Math.max(220, Math.min(viewportWidth - 12, 320));
-  const elevationWidth = 164;
-  const elevationHeight = 92;
+  const compassSize = isLandscape
+    ? Math.max(210, Math.min(viewport.width * 0.42, 320))
+    : Math.max(220, Math.min(viewport.width - 12, 320));
+  const elevationWidth = isLandscape
+    ? Math.max(220, Math.min(viewport.width * 0.42, 320))
+    : 164;
+  const elevationHeight = isLandscape ? 150 : 92;
+  const turnDelta = trackedAc && deviceHeading !== null ? signedHeadingDelta(trackedAc.az, deviceHeading) : null;
+  const turnLabel = turnDelta === null
+    ? null
+    : Math.abs(turnDelta) < 5
+      ? "On target"
+      : turnDelta > 0
+        ? `${Math.round(turnDelta)}° right`
+        : `${Math.round(Math.abs(turnDelta))}° left`;
+  const compassStatus = compassPermissionState === "unsupported"
+    ? "Compass unavailable"
+    : compassPermissionState === "needs-permission"
+      ? "Enable compass"
+      : compassPermissionState === "denied"
+        ? "Compass denied"
+        : compassPermissionState === "active"
+          ? (deviceHeading !== null ? `Phone ${Math.round(deviceHeading)}°` : "Compass active")
+          : "Compass starting…";
 
   if (showSettings) {
     return (
@@ -417,42 +578,86 @@ export default function MobileApp() {
         </div>
       </div>
 
+      <div style={compassToolbarStyle}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: "#c9d1d9", fontWeight: 600 }}>Phone compass</span>
+          <span style={{
+            fontSize: 11,
+            color: compassPermissionState === "active" ? "#3fb950" : "#8b949e",
+            fontFamily: "monospace",
+          }}>
+            {compassStatus}
+          </span>
+          {turnLabel && (
+            <span style={{ fontSize: 11, color: "#d29922", fontWeight: 600 }}>
+              Turn {turnLabel}
+            </span>
+          )}
+        </div>
+        {compassPermissionState === "needs-permission" && (
+          <button style={compassEnableBtnStyle} onClick={() => { void enableCompass(); }}>
+            Enable compass
+          </button>
+        )}
+      </div>
+
       {/* Pointing display */}
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "10px 6px 4px" }}>
+      <div
+        role="group"
+        aria-label="Tracking dials"
+        style={{
+          display: "flex",
+          flexDirection: isLandscape ? "row" : "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: isLandscape ? 20 : 2,
+          padding: "10px 6px 4px",
+        }}
+      >
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>
             Azimuth
           </div>
-          <CompassRose bearing={selectedAc?.az ?? null} size={compassSize} aircraft={compassAircraft} />
+          <CompassRose
+            bearing={trackedAc?.az ?? null}
+            deviceHeading={deviceHeading}
+            size={compassSize}
+            aircraft={isLandscape ? undefined : compassAircraft}
+          />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: -6 }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", marginTop: isLandscape ? 0 : -6 }}>
           <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em", alignSelf: "flex-start" }}>
             Elevation
           </div>
-          <ElevationArc current={selectedAc?.el ?? null} width={elevationWidth} height={elevationHeight} />
+          <ElevationArc current={trackedAc?.el ?? null} width={elevationWidth} height={elevationHeight} />
         </div>
       </div>
 
       {/* Selected aircraft detail */}
-      {selectedAc && (
+      {trackedAc && (
         <div style={selectedCardStyle}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontWeight: 700, fontSize: 16, color: "#58a6ff", fontFamily: "monospace" }}>
-              {selectedAc.callsign}
+              {trackedAc.callsign}
             </span>
-            <button style={{ ...backBtnStyle, fontSize: 11, padding: "2px 8px" }}
-              onClick={() => setSelectedAc(null)}>Clear</button>
+            {selectedAc && (
+              <button style={{ ...backBtnStyle, fontSize: 11, padding: "2px 8px" }}
+                onClick={() => setSelectedAc(null)}>Auto</button>
+            )}
           </div>
-          <div style={{ display: "flex", gap: 16, fontSize: 13, color: "#c9d1d9", fontFamily: "monospace" }}>
-            <span>AZ {selectedAc.az.toFixed(1)}°</span>
-            <span>EL {selectedAc.el.toFixed(1)}°</span>
-            <span>FL{Math.round(selectedAc.altitude_ft / 100)}</span>
-            <span>{selectedAc.distance_km.toFixed(0)} km</span>
+          <div style={{ display: "flex", gap: 16, flexWrap: "wrap", fontSize: 13, color: "#c9d1d9", fontFamily: "monospace" }}>
+            <span>AZ {trackedAc.az.toFixed(1)}°</span>
+            <span>EL {trackedAc.el.toFixed(1)}°</span>
+            <span>FL{Math.round(trackedAc.altitude_ft / 100)}</span>
+            <span>{trackedAc.distance_km.toFixed(0)} km</span>
+            {deviceHeading !== null && <span>HDG {Math.round(deviceHeading)}°</span>}
+            {turnLabel && <span>{turnLabel}</span>}
           </div>
         </div>
       )}
 
       {/* Aircraft list */}
+      {!isLandscape && (
       <div style={listContainerStyle}>
         <div style={{ fontSize: 12, color: "#8b949e", padding: "4px 12px", borderBottom: "1px solid #21262d" }}>
           {aircraft.length} aircraft · sorted by distance · tap to track
@@ -494,6 +699,7 @@ export default function MobileApp() {
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -534,9 +740,32 @@ const headerStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
+const compassToolbarStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  flexWrap: "wrap",
+  padding: "8px 12px",
+  background: "#0f141b",
+  borderBottom: "1px solid #21262d",
+  flexShrink: 0,
+};
+
 const settingsBtnStyle: React.CSSProperties = {
   background: "none", border: "1px solid #30363d", borderRadius: 6,
   color: "#8b949e", fontSize: 16, padding: "4px 10px", cursor: "pointer",
+};
+
+const compassEnableBtnStyle: React.CSSProperties = {
+  background: "rgba(88,166,255,0.12)",
+  border: "1px solid #58a6ff44",
+  borderRadius: 6,
+  color: "#58a6ff",
+  fontSize: 12,
+  padding: "4px 10px",
+  cursor: "pointer",
+  fontWeight: 600,
 };
 
 const backBtnStyle: React.CSSProperties = {

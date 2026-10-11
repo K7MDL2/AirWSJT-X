@@ -37,7 +37,7 @@ test.describe("Speech callouts — mobile app", () => {
 
   test("speech checkbox is shown in settings", async ({ page }) => {
     await page.goto("/");
-    await expect(page.locator("span").getByText("MOBILE", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await expect(page.getByText("Speech callouts")).toBeVisible();
   });
@@ -59,7 +59,7 @@ test.describe("Speech callouts — mobile app", () => {
       }));
     });
     await page.goto("/");
-    await expect(page.locator("span").getByText("MOBILE", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Settings", exact: true })).toBeVisible();
     const callCount = await page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls.length);
     expect(callCount).toBe(0);
   });
