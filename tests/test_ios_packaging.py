@@ -256,6 +256,14 @@ class IOSCIWorkflowTests(unittest.TestCase):
             "mobile.yml must upload the built iOS Simulator app as a workflow artifact",
         )
 
+    def test_workflow_adhoc_signs_simulator_app(self) -> None:
+        self.assertIn(
+            'codesign --force --sign - "$APP"',
+            self.workflow_text,
+            "mobile.yml must ad-hoc sign the simulator app; unsigned apps cannot "
+            "access the Keychain, which breaks credential storage",
+        )
+
     def test_workflow_runs_static_packaging_tests(self) -> None:
         self.assertIn(
             "test_ios_packaging",

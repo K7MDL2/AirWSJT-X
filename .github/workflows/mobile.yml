@@ -93,6 +93,9 @@ jobs:
             echo "No .app bundle found under src-tauri/gen/apple"
             exit 1
           fi
+          # Unsigned simulator apps cannot use the Keychain (errSecMissingEntitlement),
+          # which breaks credential storage. Ad-hoc signing fixes it.
+          codesign --force --sign - "$APP"
           tar czf /tmp/AirWSJT-X-ios-simulator.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
 
       - uses: actions/upload-artifact@v7
