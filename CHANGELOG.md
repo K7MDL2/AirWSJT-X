@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.9
+
+### Fixed
+- Restored a visible, usable desktop speech-announcement control on Windows by surfacing **Speech callouts** before rotator connection instead of hiding it behind a live `rotctld` session.
+- Added a prominent one-click **Speech on / Speech off** toggle in the rotator/manual status bar so azimuth/elevation announcements can be enabled or disabled quickly.
+- Restored desktop azimuth/elevation speech behavior for manual pointing mode so Windows users can get spoken target updates without a connected rotator.
+
+### Validation
+- `npm run build`
+- `npx playwright test e2e/speech-callouts.spec.ts`
+
 ## 0.3.5
 
 ### Fixed

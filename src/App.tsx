@@ -268,8 +268,8 @@ export default function App() {
     range_a_km?: number | null;
   } | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
-  const rotatorSpeechLastAnnouncedRef = useRef<{ az: number; el: number; at: number } | null>(null);
-  const rotatorSpeechLastProcessedRef = useRef<{ az: number; el: number } | null>(null);
+  const rotatorSpeechLastAnnouncedRef = useRef<{ az: number; el: number; at: number; source: "rotator" | "manual" } | null>(null);
+  const rotatorSpeechLastProcessedRef = useRef<{ az: number; el: number; source: "rotator" | "manual" } | null>(null);
 
   const addLog = useCallback((msg: string) => {
     setLog((l) => [...l.slice(-49), `${new Date().toLocaleTimeString()} ${msg}`]);
@@ -475,35 +475,50 @@ export default function App() {
     localStorage.setItem(ROTATOR_SPEECH_INTERVAL_KEY, String(rotatorSpeechIntervalSec));
   }, [rotatorSpeechIntervalSec]);
 
+  const rotatorSpeechSource = uiMode === "manual"
+    ? (
+      rotatorTargetAz !== null && rotatorTargetEl !== null
+        ? { az: rotatorTargetAz, el: rotatorTargetEl, source: "manual" as const, announceFirstUpdate: true }
+        : null
+    )
+    : (
+      rotatorConnected
+        ? { az: rotatorAz, el: rotatorEl, source: "rotator" as const, announceFirstUpdate: false }
+        : null
+    );
+
   useEffect(() => {
     if (!isSpeechSupported()) return;
-    if (!rotatorConnected || !rotatorSpeechEnabled) {
+    if (!rotatorSpeechEnabled || !rotatorSpeechSource) {
       if (rotatorSpeechLastAnnouncedRef.current) window.speechSynthesis.cancel();
       rotatorSpeechLastAnnouncedRef.current = null;
       rotatorSpeechLastProcessedRef.current = null;
       return;
     }
+    const { az, el, source, announceFirstUpdate } = rotatorSpeechSource;
     const processed = rotatorSpeechLastProcessedRef.current;
-    if (processed && processed.az === rotatorAz && processed.el === rotatorEl) return;
-    rotatorSpeechLastProcessedRef.current = { az: rotatorAz, el: rotatorEl };
+    if (processed && processed.source === source && processed.az === az && processed.el === el) return;
+    rotatorSpeechLastProcessedRef.current = { az, el, source };
     const now = Date.now();
     const last = rotatorSpeechLastAnnouncedRef.current;
-    const speechText = `Azimuth ${Math.round(rotatorAz)}, Elevation ${Math.round(rotatorEl)}`;
-    if (!last) {
-      rotatorSpeechLastAnnouncedRef.current = { az: rotatorAz, el: rotatorEl, at: now };
+    const speechText = `Azimuth ${Math.round(az)}, Elevation ${Math.round(el)}`;
+    if (!last || last.source !== source) {
+      if (announceFirstUpdate) speak(speechText);
+      rotatorSpeechLastAnnouncedRef.current = { az, el, at: now, source };
       return;
     }
-    const azDelta = Math.abs(((rotatorAz - last.az + 540) % 360) - 180);
-    const elDelta = Math.abs(rotatorEl - last.el);
+    const azDelta = Math.abs(((az - last.az + 540) % 360) - 180);
+    const elDelta = Math.abs(el - last.el);
     if (Math.max(azDelta, elDelta) < rotatorSpeechThresholdDeg) return;
     if (now - last.at < rotatorSpeechIntervalSec * 1000) return;
     speak(speechText);
-    rotatorSpeechLastAnnouncedRef.current = { az: rotatorAz, el: rotatorEl, at: now };
+    rotatorSpeechLastAnnouncedRef.current = { az, el, at: now, source };
   }, [
     rotatorAz,
     rotatorEl,
     rotatorConnected,
     rotatorSpeechEnabled,
+    rotatorSpeechSource,
     rotatorSpeechThresholdDeg,
     rotatorSpeechIntervalSec,
   ]);
