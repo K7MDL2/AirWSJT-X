@@ -10,36 +10,103 @@ permissions:
   contents: write
 
 jobs:
-  # iOS build requires Apple Developer signing credentials.
-  # To enable: add APPLE_DEVELOPMENT_TEAM secret, uncomment this job.
-  # ios:
-  #   runs-on: macos-latest
-  #   steps:
-  #     - uses: actions/checkout@v7
-  #     - uses: actions/setup-node@v7
-  #       with:
-  #         node-version: "22"
-  #     - uses: dtolnay/rust-toolchain@stable
-  #       with:
-  #         targets: aarch64-apple-ios
-  #     - run: npm ci
-  #     - run: npx tauri ios init
-  #     - name: Build iOS
-  #       run: npx tauri ios build --export-method debugging
-  #       env:
-  #         APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_DEVELOPMENT_TEAM }}
-  #     - name: Package iOS artifacts
-  #       run: find src-tauri/gen/apple -name "*.app" -type d | head -1 | xargs -I{} tar czf /tmp/AirWSJT-X-ios.tar.gz {}
-  #     - uses: actions/upload-artifact@v7
-  #       with:
-  #         name: ios-build
-  #         path: /tmp/AirWSJT-X-ios.tar.gz
-  #     - uses: softprops/action-gh-release@v3
-  #       if: startsWith(github.ref, 'refs/tags/v')
-  #       with:
-  #         files: /tmp/AirWSJT-X-ios.tar.gz
-  #       env:
-  #         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  # Unsigned iOS Simulator build. This validates the full Rust/Tauri/Swift
+  # toolchain compiles for iOS on every tagged release, without requiring
+  # any Apple Developer signing credentials (simulator builds don't need
+  # code signing).
+  #
+  # A signed on-device/TestFlight build is a follow-up: it additionally
+  # needs a provisioning profile matching this app's bundle identifier
+  # (us.ad7np.airwsjtx), not just the APPLE_TEAM_ID used for macOS signing.
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Sync app versions from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_VERSION"]
+          version = tag[1:] if tag.startswith("v") else tag
+
+          package_json = Path("package.json")
+          package_data = json.loads(package_json.read_text(encoding="utf-8"))
+          package_data["version"] = version
+          package_json.write_text(json.dumps(package_data, indent=2) + "\n", encoding="utf-8")
+
+          tauri_conf = Path("src-tauri/tauri.conf.json")
+          tauri_data = json.loads(tauri_conf.read_text(encoding="utf-8"))
+          tauri_data["version"] = version
+          tauri_conf.write_text(json.dumps(tauri_data, indent=2) + "\n", encoding="utf-8")
+
+          cargo_toml = Path("src-tauri/Cargo.toml")
+          cargo_text = cargo_toml.read_text(encoding="utf-8")
+          cargo_text, replaced = re.subn(
+              r'(?m)^version\s*=\s*"[^\"]+"$',
+              f'version = "{version}"',
+              cargo_text,
+              count=1,
+          )
+          if replaced != 1:
+              raise SystemExit("Failed to update src-tauri/Cargo.toml version")
+          cargo_toml.write_text(cargo_text, encoding="utf-8")
+          PY
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Run iOS packaging static tests
+        run: python -m unittest tests.test_ios_packaging -v
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Install Rust stable with iOS targets
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Initialize Tauri iOS project
+        run: npx tauri ios init
+
+      - name: Build unsigned iOS Simulator app
+        run: npx tauri ios build --debug --target aarch64-sim --no-sign --ci
+
+      - name: Package iOS Simulator artifact
+        run: |
+          APP=$(find src-tauri/gen/apple -name "*.app" -type d | head -1)
+          if [ -z "$APP" ]; then
+            echo "No .app bundle found under src-tauri/gen/apple"
+            exit 1
+          fi
+          tar czf /tmp/AirWSJT-X-ios-simulator.tar.gz -C "$(dirname "$APP")" "$(basename "$APP")"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-simulator-build
+          path: /tmp/AirWSJT-X-ios-simulator.tar.gz
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3
+        with:
+          files: /tmp/AirWSJT-X-ios-simulator.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   android:
     runs-on: ubuntu-latest
