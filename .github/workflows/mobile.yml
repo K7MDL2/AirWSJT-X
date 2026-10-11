@@ -22,7 +22,7 @@ jobs:
   #
   # A signed on-device/TestFlight build is a follow-up: it additionally
   # needs a provisioning profile matching this app's bundle identifier
-  # (us.ad7np.airwsjtx), not just the APPLE_TEAM_ID used for macOS signing.
+  # (us.ad7np.airwsjt-x), not just the APPLE_TEAM_ID used for macOS signing.
   ios:
     runs-on: macos-latest
     steps:
