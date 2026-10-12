@@ -10,10 +10,6 @@ on:
         description: "Also build a signed iOS app and upload it to TestFlight"
         type: boolean
         default: false
-      macos_testflight:
-        description: "Build a Mac App Store package and upload it to TestFlight"
-        type: boolean
-        default: false
 
 permissions:
   contents: write
@@ -218,138 +214,6 @@ jobs:
         if: always()
         run: rm -rf ~/private_keys
 
-  # Mac App Store / TestFlight build (manual, macos_testflight=true).
-  # Needs secrets: MAS_APP_CERTIFICATE(+_PASSWORD) = Apple Distribution .p12,
-  # MAS_INSTALLER_CERTIFICATE(+_PASSWORD) = 3rd Party Mac Developer Installer
-  # .p12, MAS_PROVISIONING_PROFILE = base64 Mac App Store .provisionprofile,
-  # plus APPLE_TEAM_ID, APPLE_API_KEY, APPLE_API_ISSUER, APPLE_API_KEY_P8.
-  macos-testflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.macos_testflight
-    runs-on: macos-latest
-    env:
-      TARGET: aarch64-apple-darwin
-      APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-      APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      BUNDLE_ID: us.ad7np.airwsjt-x
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Verify Mac App Store secrets
-        env:
-          HAVE_APP: ${{ secrets.MAS_APP_CERTIFICATE != '' && secrets.MAS_APP_CERTIFICATE_PASSWORD != '' }}
-          HAVE_INSTALLER: ${{ secrets.MAS_INSTALLER_CERTIFICATE != '' && secrets.MAS_INSTALLER_CERTIFICATE_PASSWORD != '' }}
-          HAVE_PROFILE: ${{ secrets.MAS_PROVISIONING_PROFILE != '' }}
-          HAVE_API: ${{ secrets.APPLE_API_KEY != '' && secrets.APPLE_API_ISSUER != '' && secrets.APPLE_API_KEY_P8 != '' && secrets.APPLE_TEAM_ID != '' }}
-        run: |
-          for v in HAVE_APP HAVE_INSTALLER HAVE_PROFILE HAVE_API; do
-            if [ "${!v}" != "true" ]; then
-              echo "::error::Missing Mac App Store secrets (${v#HAVE_}); see comment above the macos-testflight job"
-              exit 1
-            fi
-          done
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Bundle Python sidecar with PyInstaller
-        run: |
-          pip install pyinstaller certifi
-          pyinstaller --onefile --name airwsjtx_bridge --distpath src-tauri/binaries --paths . sidecar/airwsjtx_bridge.py
-          mv src-tauri/binaries/airwsjtx_bridge "src-tauri/binaries/airwsjtx_bridge-$TARGET"
-          chmod +x "src-tauri/binaries/airwsjtx_bridge-$TARGET"
-
-      - name: Import signing certificates
-        env:
-          MAS_APP_CERTIFICATE: ${{ secrets.MAS_APP_CERTIFICATE }}
-          MAS_APP_CERTIFICATE_PASSWORD: ${{ secrets.MAS_APP_CERTIFICATE_PASSWORD }}
-          MAS_INSTALLER_CERTIFICATE: ${{ secrets.MAS_INSTALLER_CERTIFICATE }}
-          MAS_INSTALLER_CERTIFICATE_PASSWORD: ${{ secrets.MAS_INSTALLER_CERTIFICATE_PASSWORD }}
-        run: |
-          KEYCHAIN="$RUNNER_TEMP/mas.keychain-db"
-          KEYCHAIN_PW="$(uuidgen)"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          echo "$MAS_APP_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/app.p12"
-          echo "$MAS_INSTALLER_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/installer.p12"
-          security import "$RUNNER_TEMP/app.p12" -P "$MAS_APP_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security import "$RUNNER_TEMP/installer.p12" -P "$MAS_INSTALLER_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KEYCHAIN_PW" "$KEYCHAIN"
-          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
-          rm "$RUNNER_TEMP/app.p12" "$RUNNER_TEMP/installer.p12"
-          security find-identity -v "$KEYCHAIN"
-
-      - name: Install App Store Connect API key
-        env:
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-        run: |
-          mkdir -p ~/private_keys
-          printf '%s' "$APPLE_API_KEY_P8" > ~/private_keys/AuthKey_${APPLE_API_KEY}.p8
-
-      - name: Build unsigned app bundle
-        run: |
-          npx tauri build --target "$TARGET" --bundles app --ci \
-            --config src-tauri/tauri.desktop.conf.json \
-            -c '{"bundle":{"macOS":{"entitlements":null,"minimumSystemVersion":"12.0"}}}'
-
-      - name: Sign for Mac App Store and build installer package
-        env:
-          MAS_PROVISIONING_PROFILE: ${{ secrets.MAS_PROVISIONING_PROFILE }}
-        run: |
-          APP=$(find "src-tauri/target/$TARGET/release/bundle/macos" -maxdepth 1 -name "*.app" | head -1)
-          [ -n "$APP" ] || { echo "No .app produced"; exit 1; }
-          PLIST="$APP/Contents/Info.plist"
-
-          echo "$MAS_PROVISIONING_PROFILE" | base64 --decode > "$APP/Contents/embedded.provisionprofile"
-
-          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" "$PLIST" \
-            || /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string ${{ github.run_number }}" "$PLIST"
-          /usr/libexec/PlistBuddy -c "Add :LSApplicationCategoryType string public.app-category.utilities" "$PLIST" 2>/dev/null || true
-          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$PLIST" 2>/dev/null || true
-
-          ENT="$RUNNER_TEMP/app.entitlements"
-          cp src-tauri/entitlements-mas.plist "$ENT"
-          /usr/libexec/PlistBuddy -c "Add :com.apple.application-identifier string $TEAM_ID.$BUNDLE_ID" "$ENT"
-          /usr/libexec/PlistBuddy -c "Add :com.apple.developer.team-identifier string $TEAM_ID" "$ENT"
-
-          # Sandboxed helper binaries must inherit the parent sandbox.
-          for BIN in "$APP"/Contents/MacOS/*; do
-            if [ "$(basename "$BIN")" != "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$PLIST")" ]; then
-              codesign --force --timestamp --options runtime \
-                --entitlements src-tauri/entitlements-mas-sidecar.plist \
-                --sign "Apple Distribution" "$BIN"
-            fi
-          done
-          codesign --force --timestamp --options runtime \
-            --entitlements "$ENT" --sign "Apple Distribution" "$APP"
-          codesign --verify --deep --strict --verbose=2 "$APP"
-
-          productbuild --component "$APP" /Applications \
-            --sign "3rd Party Mac Developer Installer" "$RUNNER_TEMP/AirWSJT-X.pkg"
-
-      - name: Upload to TestFlight
-        run: |
-          xcrun altool --upload-app --type macos -f "$RUNNER_TEMP/AirWSJT-X.pkg" \
-            --apiKey "$APPLE_API_KEY" --apiIssuer "$APPLE_API_ISSUER"
-
-      - name: Remove API key
-        if: always()
-        run: rm -rf ~/private_keys
-
   android:
     runs-on: ubuntu-latest
     steps:
@@ -427,31 +291,68 @@ jobs:
 
       # ── Build ─────────────────────────────────────────────────────────────
       - name: Initialize Tauri Android
-        run: npx tauri android init
+        run: npx tauri android init --skip-targets-install
 
-      - name: Build Android APK flavors
-        run: npx tauri android build --apk
+      - name: Build Android ARM APK
+        run: |
+          rm -rf src-tauri/gen/android/app/build/outputs/apk
+          npx tauri android build --apk --target aarch64 armv7
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Locate, align, and sign APKs ─────────────────────────────────────
-      - name: Find and sign APK flavors
-        id: find_apks
+      - name: Capture ARM APK
+        id: capture_arm_apk
         run: |
-          mapfile -t APKS < <(find src-tauri/gen/android/app/build/outputs/apk -name "*-release-unsigned.apk" -type f | sort)
-          if [ "${#APKS[@]}" -eq 0 ]; then
-            echo "No release APKs found under src-tauri/gen/android/app/build/outputs/apk"
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*-release-unsigned.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            echo "No ARM release APK found under src-tauri/gen/android/app/build/outputs/apk"
             find src-tauri/gen/android -type f | head -20
             exit 1
           fi
+          mkdir -p /tmp/android-unsigned
+          cp "$APK" /tmp/android-unsigned/AirWSJT-X-android-arm-unsigned.apk
+          echo "arm_apk_path=/tmp/android-unsigned/AirWSJT-X-android-arm-unsigned.apk" >> $GITHUB_OUTPUT
 
-          # Generate a debug keystore for signing
-          keytool -genkeypair -v \
-            -keystore /tmp/debug.keystore \
-            -alias androiddebugkey \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=Android Debug,O=Android,C=US"
+      - name: Build Android x86_64 APK
+        run: |
+          rm -rf src-tauri/gen/android/app/build/outputs/apk
+          npx tauri android build --apk --target x86_64
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Capture x86_64 APK
+        id: capture_x86_64_apk
+        run: |
+          APK=$(find src-tauri/gen/android/app/build/outputs/apk -name "*-release-unsigned.apk" -type f | head -1)
+          if [ -z "$APK" ]; then
+            echo "No x86_64 release APK found under src-tauri/gen/android/app/build/outputs/apk"
+            find src-tauri/gen/android -type f | head -20
+            exit 1
+          fi
+          mkdir -p /tmp/android-unsigned
+          cp "$APK" /tmp/android-unsigned/AirWSJT-X-android-x86_64-unsigned.apk
+          echo "x86_64_apk_path=/tmp/android-unsigned/AirWSJT-X-android-x86_64-unsigned.apk" >> $GITHUB_OUTPUT
+
+      # ── Align, sign, and validate APKs ───────────────────────────────────
+      - name: Sign APK flavors
+        id: find_apks
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          # Every release must be signed with the same persistent key, otherwise
+          # Android refuses to update an installed build ("signatures do not match").
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ] || [ -z "${ANDROID_KEYSTORE_PASSWORD:-}" ] || [ -z "${ANDROID_KEY_ALIAS:-}" ]; then
+            echo "::error::Missing ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS repository secrets"
+            exit 1
+          fi
+          KEYSTORE="$RUNNER_TEMP/release.keystore"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+
+          mapfile -t APKS < <(printf '%s\n' \
+            "${{ steps.capture_arm_apk.outputs.arm_apk_path }}" \
+            "${{ steps.capture_x86_64_apk.outputs.x86_64_apk_path }}")
 
           BUILD_TOOLS="${ANDROID_HOME}/build-tools/$(ls ${ANDROID_HOME}/build-tools/ | sort -V | tail -1)"
           mkdir -p /tmp/android-signed
@@ -466,10 +367,10 @@ jobs:
             "${BUILD_TOOLS}/zipalign" -f 4 "$APK" "$ALIGNED"
 
             "${BUILD_TOOLS}/apksigner" sign \
-              --ks /tmp/debug.keystore \
-              --ks-key-alias androiddebugkey \
-              --ks-pass pass:android \
-              --key-pass pass:android \
+              --ks "$KEYSTORE" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass env:ANDROID_KEYSTORE_PASSWORD \
+              --key-pass env:ANDROID_KEYSTORE_PASSWORD \
               --out "$SIGNED" \
               "$ALIGNED"
 
@@ -478,6 +379,7 @@ jobs:
             echo "APK found and signed: $APK -> $SIGNED"
           done
 
+          rm -f "$KEYSTORE"
           echo "signed_apk_dir=/tmp/android-signed" >> $GITHUB_OUTPUT
           echo "signed_apk_list=/tmp/android-signed/apk-list.txt" >> $GITHUB_OUTPUT
 
@@ -500,6 +402,7 @@ jobs:
           echo "zipalign:  $ZIPALIGN"
 
           PASS=0; FAIL=0
+          : > /tmp/signer-certs.txt
           check() {
             local label="$1" result="$2"
             if [ "$result" = "ok" ]; then
@@ -559,11 +462,21 @@ jobs:
               check "$NAME targetSdkVersion present" "missing"
             fi
 
-            if "$APKSIGNER" verify --verbose "$APK" 2>&1 | grep -q "Verified using"; then
-              check "$NAME is signed" ok
+            if "$APKSIGNER" verify --verbose --print-certs "$APK" > /tmp/verify.txt 2>&1 && grep -Eq "Verified using v(2|3) scheme.*true" /tmp/verify.txt; then
+              check "$NAME is signed (APK Signature Scheme v2/v3)" ok
             else
-              check "$NAME is signed" "apksigner verify failed — APK is unsigned or has invalid signature"
+              cat /tmp/verify.txt
+              check "$NAME is signed (APK Signature Scheme v2/v3)" "apksigner verify failed — APK is unsigned or has invalid signature"
             fi
+
+            if grep -q "CN=Android Debug" /tmp/verify.txt; then
+              check "$NAME is signed with the release key" "signed with a throwaway debug certificate"
+            else
+              check "$NAME is signed with the release key" ok
+            fi
+
+            CERT=$(grep -oP "certificate SHA-256 digest: \K[0-9a-f]+" /tmp/verify.txt | head -1 || true)
+            echo "$CERT" >> /tmp/signer-certs.txt
 
             if "$ZIPALIGN" -c -v 4 "$APK" > /dev/null 2>&1; then
               check "$NAME is zip-aligned (4-byte)" ok
@@ -572,26 +485,12 @@ jobs:
             fi
 
             case "$NAME" in
-              *universal*)
+              *arm*)
                 if unzip -l "$APK" | grep -q "lib/arm64-v8a/"; then
                   check "$NAME arm64-v8a native library present" ok
                 else
                   check "$NAME arm64-v8a native library present" "missing"
                 fi
-                if unzip -l "$APK" | grep -q "lib/armeabi-v7a/"; then
-                  check "$NAME armeabi-v7a native library present" ok
-                else
-                  check "$NAME armeabi-v7a native library present" "missing"
-                fi
-                ;;
-              *arm64*)
-                if unzip -l "$APK" | grep -q "lib/arm64-v8a/"; then
-                  check "$NAME arm64-v8a native library present" ok
-                else
-                  check "$NAME arm64-v8a native library present" "missing"
-                fi
-                ;;
-              *arm-release*)
                 if unzip -l "$APK" | grep -q "lib/armeabi-v7a/"; then
                   check "$NAME armeabi-v7a native library present" ok
                 else
@@ -616,6 +515,14 @@ jobs:
           done
 
           echo ""
+          UNIQUE_CERTS=$(sort -u /tmp/signer-certs.txt | grep -c . || true)
+          if [ "$UNIQUE_CERTS" -eq 1 ]; then
+            check "all APK flavors share one signing certificate" ok
+          else
+            check "all APK flavors share one signing certificate" "found $UNIQUE_CERTS distinct certificates"
+          fi
+          echo "Signing certificate SHA-256: $(sort -u /tmp/signer-certs.txt | head -1)"
+
           echo "Results: $PASS passed, $FAIL failed"
           [ "$FAIL" -eq 0 ] || exit 1
 

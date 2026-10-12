@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "AirWSJT-X",
-  "version": "0.3.10",
+  "version": "0.3.12",
   "identifier": "us.ad7np.airwsjtx",
   "build": {
     "frontendDist": "../dist",
@@ -18,8 +18,7 @@
         "minWidth": 900,
         "minHeight": 600,
         "resizable": true,
-        "fullscreen": false,
-        "backgroundColor": "#0d1117"
+        "fullscreen": false
       }
     ],
     "security": {
