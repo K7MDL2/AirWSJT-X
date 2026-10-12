@@ -168,6 +168,7 @@ const REMOTE_DB_URL = "https://ad7np.us/RoverAIM/DB";
 const PORTABLE_VIEW_KEY = "airwsjtx.portableViewMode";
 const MY_CALL_OVERRIDE_KEY = "airwsjtx.myCallOverride";
 const MY_GRID_OVERRIDE_KEY = "airwsjtx.myGridOverride";
+const MY_ALT_KEY = "airwsjtx.myAltitudeM";
 const PORTABLE_SCALE_KEY = "airwsjtx.portableScale";
 const PORTABLE_MIN_FONT_PX = 28;
 const PORTABLE_BASE_FONT_PX = 72;
@@ -240,6 +241,7 @@ export default function App() {
   const myStationRestored = useRef(false);
   const [dxGridInput, setDxGridInput] = useState("");
   const myGridEditing = useRef(false);
+  const [myAltInput, setMyAltInput] = useState(() => localStorage.getItem(MY_ALT_KEY) ?? "");
   const dxGridEditing = useRef(false);
   const [nowEpochS, setNowEpochS] = useState(() => Math.floor(Date.now() / 1000));
   const [autoLock, setAutoLock] = useState(true);
@@ -662,8 +664,9 @@ export default function App() {
   useEffect(() => {
     if (!status || myStationRestored.current) return;
     myStationRestored.current = true;
-    if (myCallOverride || myGridOverride) {
-      rpc("set_my_station_override", { callsign: myCallOverride || null, grid: myGridOverride || null })
+    const savedAlt = localStorage.getItem(MY_ALT_KEY) ?? "";
+    if (myCallOverride || myGridOverride || savedAlt) {
+      rpc("set_my_station_override", { callsign: myCallOverride || null, grid: myGridOverride || null, altitude_m: savedAlt === "" ? null : Number(savedAlt) })
         .catch(e => addLog(`MY station restore error: ${e}`));
     }
   }, [status, myCallOverride, myGridOverride, addLog]);
@@ -683,9 +686,16 @@ export default function App() {
       addLog("MY grid must be a valid 4, 6, or 8 character Maidenhead locator");
       return;
     }
+    const altText = myAltInput.trim();
+    const altM = altText === "" ? null : Number(altText);
+    if (altM !== null && (!Number.isFinite(altM) || altM < -500 || altM > 9000)) {
+      addLog("MY altitude must be a number of metres between -500 and 9000");
+      return;
+    }
     setMyStationBusy(true);
     try {
-      await rpc("set_my_station_override", { callsign: call || null, grid: grid || null });
+      await rpc("set_my_station_override", { callsign: call || null, grid: grid || null, altitude_m: altM });
+      localStorage.setItem(MY_ALT_KEY, altText);
       localStorage.setItem(MY_CALL_OVERRIDE_KEY, call);
       localStorage.setItem(MY_GRID_OVERRIDE_KEY, grid);
       if (reset) savePortableGrid(myCallsign, null);
@@ -941,6 +951,16 @@ export default function App() {
                     width: 86,
                     fontFamily: "monospace",
                   }}
+                />
+                <input
+                  aria-label="MY altitude (m)"
+                  title="Station altitude above sea level, metres"
+                  value={myAltInput}
+                  onChange={(e) => setMyAltInput(e.target.value)}
+                  inputMode="decimal"
+                  placeholder="Alt m"
+                  style={{ background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)",
+                    borderRadius: 4, padding: "2px 6px", fontSize: 11, width: 56, fontFamily: "monospace" }}
                 />
                 <button className="btn-secondary" aria-label="Apply MY station" disabled={myStationBusy}
                   style={{ fontSize: 10, padding: "2px 8px" }} onClick={() => { void applyMyStation(); }}>

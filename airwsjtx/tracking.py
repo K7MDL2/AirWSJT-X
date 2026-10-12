@@ -33,6 +33,7 @@ def build_track(
     lon_a: float,
     n_samples: int = 6,
     sample_interval_s: float = 15.0,
+    station_alt_m: float = 0.0,
 ) -> AircraftTrack:
     """
     Build an AircraftTrack by projecting the aircraft position forward.
@@ -57,8 +58,8 @@ def build_track(
         from .geo import haversine_km, elevation_deg, slant_range_km, bearing_deg
         d_surf = haversine_km(lat_a, lon_a, lat, lon)
         az = bearing_deg(lat_a, lon_a, lat, lon)
-        el = elevation_deg(d_surf, alt)
-        sr = slant_range_km(d_surf, alt)
+        el = elevation_deg(d_surf, alt, station_alt_m)
+        sr = slant_range_km(d_surf, alt, station_alt_m)
 
         samples.append(AircraftSample(
             timestamp=now + timedelta(seconds=dt),
@@ -82,6 +83,7 @@ def select_best_aircraft(
     lat_b: float,
     lon_b: float,
     min_score: float = 0.15,
+    station_a_alt_m: float = 0.0,
 ) -> tuple[Aircraft | None, float]:
     """
     Return (best_aircraft, score) for the aircraft with the highest scatter
@@ -96,6 +98,7 @@ def select_best_aircraft(
         geo = scatter_geometry(
             lat_a, lon_a, lat_b, lon_b,
             ac.lat, ac.lon, ac.altitude_m,  # type: ignore[arg-type]
+            station_a_alt_m,
         )
         score = geo["scatter_score"]
         if score > best_score and score >= min_score:

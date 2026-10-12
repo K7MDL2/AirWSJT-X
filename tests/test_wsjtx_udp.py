@@ -249,6 +249,19 @@ class WSJTXListenerSocketTests(unittest.TestCase):
                 self.assertEqual(bridge._station_a_call, "W1AW")
                 self.assertEqual(bridge._station_a_locator, "FN31PR")
 
+    def test_my_station_altitude_is_stored_and_validated(self) -> None:
+        from sidecar import airwsjtx_bridge as bridge
+
+        with patch.multiple(bridge, _my_call_override=None, _my_grid_override=None,
+                            _station_a_call=None, _station_a_locator=None,
+                            _wsjtx_de_call=None, _wsjtx_de_grid=None, _station_a_alt_m=0.0):
+            with patch.object(bridge, "_start_configured_airscout_feed"), patch.object(bridge, "_emit"):
+                bridge.handle({"id": "a", "method": "set_my_station_override",
+                               "params": {"grid": "CN87VP", "altitude_m": 1250}})
+                self.assertEqual(bridge._station_a_alt_m, 1250.0)
+                bridge.handle({"id": "b", "method": "set_my_station_override", "params": {}})
+                self.assertEqual(bridge._station_a_alt_m, 0.0)
+
     def test_manual_dx_grid_survives_wsjtx_status(self) -> None:
         from sidecar import airwsjtx_bridge as bridge
 
