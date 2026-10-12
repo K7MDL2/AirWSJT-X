@@ -1,0 +1,13 @@
+{
+  "export_compliance": {
+    "uses_encryption": true,
+    "encryption_type": "standard_https",
+    "is_exempt": true,
+    "exemption_reason": "The app uses HTTPS (TLS) for network communication only — standard system-provided encryption for fetching aircraft data from public APIs. No custom encryption algorithms, no encryption of user data, no encryption services provided to third parties.",
+    "contains_third_party_encryption": false,
+    "contains_proprietary_encryption": false,
+    "available_on_french_store": true,
+    "itc_compliance_key": "APP_USES_NON_EXEMPT_ENCRYPTION = NO"
+  },
+  "notes": "Set 'Export Compliance Information' in App Store Connect → App Information → Content Rights to: 'Uses encryption: Yes, Exempt: Yes (uses only standard HTTPS)'. This avoids the export compliance warning on every build upload."
+}

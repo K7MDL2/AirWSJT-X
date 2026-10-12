@@ -1,0 +1,58 @@
+{
+  "app_name": "AirWSJT-X",
+  "subtitle": "Aircraft Scatter for WSJT-X",
+  "primary_category": "UTILITIES",
+  "secondary_category": "EDUCATION",
+  "content_rights": "This app does not contain, show, or access third-party content.",
+  "age_rating": {
+    "rating": "4+",
+    "violence": "none",
+    "gambling": false,
+    "mature_content": false,
+    "alcohol_tobacco": false,
+    "unrestricted_web_access": false
+  },
+  "pricing": {
+    "price_tier": 0,
+    "available_in_all_territories": true
+  },
+  "copyright": "© 2026 Carlos Picoto (AD7NP)",
+  "support_url": "https://ad7np.us/Support/AirWSJT-X",
+  "marketing_url": "https://ad7np.us/AirWSJT-X",
+  "privacy_policy_url": "https://ad7np.us/Privacy/AirWSJT-X",
+  "en-US": {
+    "name": "AirWSJT-X",
+    "subtitle": "Aircraft Scatter for WSJT-X",
+    "description": "AirWSJT-X automates aircraft scatter contacts on 23 cm (1296 MHz) and higher microwave bands using WSJT-X weak-signal digital modes.\n\nCommercial aircraft flying between two ham radio stations act as dynamic reflectors. AirWSJT-X tracks them in real time, locks your rotator to the best candidate, configures WSJT-X for Q65-15s, and manages the entire QSO — from aircraft selection through contact completion.\n\nDESKTOP FEATURES\n• Real-time aircraft tracking with scatter score ranking\n• Automated rotator control via Hamlib\n• Full WSJT-X integration over UDP — frequency, mode, and QSO sequencing\n• Contact state machine: CQ → signal report → RRR → 73\n• Multi-source aircraft data: OpenSky Network, ADS-B Exchange, dump1090\n• Station grid override database with remote sync\n• Support for multiple simultaneous WSJT-X instances\n\nMOBILE FEATURES\n• Standalone aircraft tracker — no WSJT-X or rotator needed\n• Compass rose with bearing needle and elevation arc\n• Speech callouts for hands-free antenna pointing\n• Offline callsign lookup via callook.info\n• OpenSky and ADS-B Exchange data sources\n\nBUILT FOR MICROWAVE OPERATORS\nDesigned for the 23 cm and above amateur radio community. Whether you're running a fixed station with rotator control or pointing a dish by hand in the field, AirWSJT-X helps you find and work aircraft scatter contacts that would otherwise be missed.\n\nREQUIREMENTS\n• macOS 12.0 or later\n• WSJT-X 2.6+ for full desktop operation\n• Hamlib-compatible rotator for automated tracking\n• Aircraft data source account (free OpenSky or ADS-B Exchange)\n\nAirWSJT-X is open source and free. No ads, no subscriptions, no in-app purchases.",
+    "keywords": "ham radio,WSJT-X,aircraft scatter,amateur radio,microwave,Q65,1296 MHz,23cm,rotator,ADS-B,aircraft tracking,weak signal,digital modes,VHF,UHF",
+    "whats_new": "v0.3.13:\n• Fixed jittery Android compass heading with low-pass filter\n• Fixed decode row column overflow in desktop UI\n• Improved TestFlight signing and CI reliability\n• All 37 automated UI tests passing",
+    "promotional_text": "Automate aircraft scatter contacts on 23 cm and above — real-time tracking, rotator lock, and full WSJT-X integration."
+  },
+  "screenshot_specs": {
+    "mac": {
+      "required_sizes": [
+        {
+          "label": "Retina 16-inch",
+          "width": 2880,
+          "height": 1800,
+          "required": true
+        },
+        {
+          "label": "Retina 15-inch",
+          "width": 2560,
+          "height": 1600,
+          "required": false
+        },
+        {
+          "label": "Non-Retina",
+          "width": 1440,
+          "height": 900,
+          "required": false,
+          "note": "Already have these"
+        }
+      ],
+      "minimum_screenshots": 1,
+      "maximum_screenshots": 10
+    }
+  }
+}

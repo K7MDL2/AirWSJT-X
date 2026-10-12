@@ -140,6 +140,8 @@ jobs:
           # Set app category required by App Store
           /usr/libexec/PlistBuddy -c "Set :LSApplicationCategoryType public.app-category.utilities" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Add :LSApplicationCategoryType string public.app-category.utilities" "$APP_PATH/Contents/Info.plist"
+          # Skip export compliance dialog on each TestFlight upload (app uses only HTTPS)
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
 
           echo "=== Info.plist key values ==="
           /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Contents/Info.plist"

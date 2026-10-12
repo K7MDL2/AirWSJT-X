@@ -1,0 +1,13 @@
+AirWSJT-X is a ham (amateur) radio application for aircraft scatter communication on microwave frequencies (1296 MHz and above).
+
+To test the app:
+1. Launch AirWSJT-X — the app will show a dark-themed UI with three columns: Stations, Aircraft, and Decodes.
+2. Without WSJT-X running, the app will show "Disconnected" status in the top bar — this is expected.
+3. The Aircraft panel will populate with nearby aircraft data when an OpenSky Network or ADS-B Exchange account is configured.
+4. Full functionality requires WSJT-X (a separate amateur radio application) running on the same machine, and a Hamlib-compatible antenna rotator — this is specialized equipment not available for general testing.
+
+The app requires no sign-in. Aircraft data source credentials are optional and enhance functionality but are not required to launch and explore the interface.
+
+This app is intended for licensed amateur radio operators (ham radio) and uses only standard network protocols (HTTP/HTTPS for aircraft data, UDP for WSJT-X communication on localhost).
+
+Demo video available at: https://ad7np.us/AirWSJT-X
