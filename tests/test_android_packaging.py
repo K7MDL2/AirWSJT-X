@@ -275,26 +275,21 @@ class AndroidCIWorkflowTests(unittest.TestCase):
 
     def test_workflow_runs_tauri_android_init(self) -> None:
         self.assertIn(
-            "tauri android init",
-            self.workflow_text,
-            "mobile.yml must initialize the full Tauri Android project before building APK flavors",
-        )
-        self.assertNotIn(
             "tauri android init --skip-targets-install",
             self.workflow_text,
-            "mobile.yml should not skip target installation when restoring the full Android flavor build",
+            "mobile.yml must initialize Android without reinstalling Rust targets already provisioned in CI",
         )
 
     def test_workflow_runs_tauri_android_build(self) -> None:
         self.assertIn(
-            "tauri android build --apk",
-            self.workflow_text,
-            "mobile.yml must build Android APKs in CI",
-        )
-        self.assertNotIn(
             "tauri android build --apk --target aarch64 armv7",
             self.workflow_text,
-            "mobile.yml should not limit Android CI back to the reduced ARM-only target set",
+            "mobile.yml must build the device ARM APK flavor set in CI",
+        )
+        self.assertIn(
+            "tauri android build --apk --target x86_64",
+            self.workflow_text,
+            "mobile.yml must also build the x86_64 Android APK flavor for emulator/testing use",
         )
 
     def test_workflow_uploads_artifact(self) -> None:
@@ -382,6 +377,36 @@ class AndroidCIWorkflowTests(unittest.TestCase):
             self.workflow_text,
             "mobile.yml must upload all signed APK flavors, not just a single unsigned Gradle output",
         )
+        self.assertIn(
+            "arm_apk_path=/tmp/android-unsigned/AirWSJT-X-android-arm-unsigned.apk",
+            self.workflow_text,
+            "mobile.yml must persist the ARM unsigned APK between sequential flavor builds",
+        )
+        self.assertIn(
+            "x86_64_apk_path=/tmp/android-unsigned/AirWSJT-X-android-x86_64-unsigned.apk",
+            self.workflow_text,
+            "mobile.yml must persist the x86_64 unsigned APK between sequential flavor builds",
+        )
+
+    def test_workflow_signs_with_persistent_release_key(self) -> None:
+        for secret in ("ANDROID_KEYSTORE_BASE64", "ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEY_ALIAS"):
+            self.assertIn(
+                f"secrets.{secret}",
+                self.workflow_text,
+                f"mobile.yml must read the signing key from the {secret} secret",
+            )
+        self.assertNotIn(
+            "debug.keystore",
+            self.workflow_text,
+            "mobile.yml must not sign releases with a throwaway debug keystore — "
+            "a different key per release breaks in-place Android updates",
+        )
+        self.assertNotIn("pass:android", self.workflow_text)
+        self.assertIn("CN=Android Debug", self.workflow_text, "validation must reject debug-signed APKs")
+
+    def test_release_workflow_does_not_use_retired_intel_runner(self) -> None:
+        release = (_MOBILE_WORKFLOW.parent / "release.yml").read_text(encoding="utf-8")
+        self.assertNotIn("macos-13", release)
 
     def test_workflow_validates_zip_alignment(self) -> None:
         self.assertIn(

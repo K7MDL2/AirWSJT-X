@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The manual Mac App Store / TestFlight workflow no longer fails App Store Connect validation (error 90869): the macOS bundle now declares a 12.0 minimum system version.
+- Rebased the iOS/macOS TestFlight workflow on top of the current Android signing/flavor workflow, fixing "Expected multiple APK flavors, found 1" in manual Mobile Build runs.
+
+## 0.3.12
+
+### Fixed
+- Android APKs are now signed with a persistent release key (repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`) instead of a throwaway debug key regenerated on every run. A different key per release made Android reject in-place updates with a signature mismatch. The workflow now fails if the secrets are missing, if an APK is debug-signed, or if the ARM and x86_64 APKs use different certificates.
+- Removed the macOS Intel build from the release workflow; the `macos-13` runner never started, which also blocked the website deploy job.
+
+> Upgrade note: devices with an earlier debug-signed APK (v0.3.9–v0.3.11) must uninstall once before installing a release signed with the new key.
+
+## 0.3.11
+
+### Fixed
+- Aircraft elevation and slant range now account for Earth curvature. Previously a flat-earth formula showed distant aircraft (e.g. FL369 at 8700 km) at ~0° EL instead of below the horizon, so unreachable aircraft were scored and auto-locked (#75).
+- A DX grid selected in the app is no longer overwritten by WSJT-X's DX grid, so scoring, lock, and "From DX Station" AZ/EL use the chosen DX station (#76).
+- Android release builds now produce separate signed ARM and x86_64 APKs, fixing the APK flavor validation/signing failure seen in v0.3.10.
+
+### Validation
+- `python -m unittest discover -s tests -v`
+- `npx tsc --noEmit`
+
 ## 0.3.10
 
 ### Fixed

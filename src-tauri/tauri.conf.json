@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/schema.json",
   "productName": "AirWSJT-X",
-  "version": "0.3.10",
+  "version": "0.3.12",
   "identifier": "us.ad7np.airwsjtx",
   "build": {
     "frontendDist": "../dist",
@@ -38,6 +38,7 @@
     ],
     "macOS": {
       "signingIdentity": null,
+      "minimumSystemVersion": "12.0",
       "providerShortName": "QJ2R7N9BRA",
       "entitlements": "Entitlements.plist"
     }
