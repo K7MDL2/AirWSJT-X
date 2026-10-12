@@ -106,7 +106,7 @@ jobs:
           IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/mas-signing.keychain-db" | grep "Apple Distribution" | head -1 | sed 's/.*"\(.*\)".*/\1/')
           echo "Signing sidecar with: $IDENTITY"
           codesign --force --options runtime \
-            --entitlements src-tauri/entitlements-mas.plist \
+            --entitlements src-tauri/entitlements-mas-sidecar.plist \
             --sign "$IDENTITY" \
             src-tauri/binaries/airwsjtx_bridge-aarch64-apple-darwin
           codesign -dv --verbose=2 src-tauri/binaries/airwsjtx_bridge-aarch64-apple-darwin
@@ -152,7 +152,7 @@ jobs:
           # Deep-sign all nested code first, then the outer .app
           find "$APP_PATH/Contents/MacOS" -type f -perm +111 ! -name "AirWSJT-X" | while read bin; do
             codesign --force --options runtime \
-              --entitlements src-tauri/entitlements-mas.plist \
+              --entitlements src-tauri/entitlements-mas-sidecar.plist \
               --sign "$IDENTITY" "$bin"
           done
 
