@@ -626,6 +626,7 @@ export default function MobileApp() {
           justifyContent: "center",
           gap: isLandscape ? 20 : 2,
           padding: "10px 6px 4px",
+          flexShrink: 0,
         }}
       >
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
@@ -671,7 +672,7 @@ export default function MobileApp() {
       )}
 
       {/* Aircraft list */}
-      {!isLandscape && (
+      {(
       <div style={listContainerStyle}>
         <div style={{ fontSize: 12, color: "#8b949e", padding: "4px 12px", borderBottom: "1px solid #21262d" }}>
           {aircraft.length} aircraft · sorted by distance · tap to track
@@ -743,7 +744,8 @@ const containerStyle: React.CSSProperties = {
   display: "flex", flexDirection: "column", height: "100vh", maxHeight: "100dvh",
   background: "#0d1117", color: "#c9d1d9",
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-  overflow: "hidden",
+  overflowY: "auto", overflowX: "hidden",
+  WebkitOverflowScrolling: "touch", touchAction: "pan-y",
 };
 
 const headerStyle: React.CSSProperties = {
@@ -801,8 +803,8 @@ const selectedCardStyle: React.CSSProperties = {
 };
 
 const listContainerStyle: React.CSSProperties = {
-  flex: 1, minHeight: 0, overflowY: "auto", borderTop: "1px solid #21262d",
-  WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y",
+  flex: "0 0 auto", minHeight: 160, borderTop: "1px solid #21262d",
+  paddingBottom: "env(safe-area-inset-bottom)",
 };
 
 const listItemStyle: React.CSSProperties = {
