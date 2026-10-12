@@ -23,7 +23,7 @@
   <h2>Data the App Accesses</h2>
   <p>AirWSJT-X makes network requests solely for its core functionality:</p>
   <ul>
-    <li><strong>Aircraft position data</strong> — fetched from OpenSky Network or ADS-B Exchange using credentials you provide. These services have their own privacy policies.</li>
+    <li><strong>Aircraft position data</strong> — fetched from OpenSky Network or ADS-B Exchange using credentials you provide. To find nearby aircraft, the app sends the geographic area around your station (derived from your grid locator, or your device location on mobile) with the request. These services have their own privacy policies.</li>
     <li><strong>Station database</strong> — a shared list of amateur radio station grid squares fetched from ad7np.us. This contains only callsigns and grid locators voluntarily published by radio operators.</li>
     <li><strong>Callsign lookups</strong> — queries to callook.info for publicly available FCC license data.</li>
   </ul>
@@ -34,9 +34,12 @@
     <li>No crash reporting sent to us</li>
     <li>No advertising or tracking</li>
     <li>No personal information collection</li>
-    <li>No location data sent to any server</li>
+    <li>No location data sent to us or stored on any server we control</li>
     <li>No account registration required</li>
   </ul>
+
+  <h2>Device Location (Mobile)</h2>
+  <p>On iPhone, iPad and Android, AirWSJT-X can read your device's location and altitude, only while the app is in use and only with your permission. This is used on the device to compute accurate aircraft azimuth and elevation angles. Location is not stored, not shared with us, and not sent to any third party other than as the general search area described above. You can decline or revoke permission at any time; the app then uses your grid locator instead.</p>
 
   <h2>Local Storage</h2>
   <p>The app stores your settings (station callsign, grid locator, aircraft data source credentials) locally on your device. On mobile, credentials are stored in the OS secure credential store (Keychain on iOS/macOS). This data never leaves your device except as part of the network requests described above.</p>
