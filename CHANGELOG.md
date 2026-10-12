@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.15
+
+### Fixed
+- Android: the main page now scrolls as a whole, so the aircraft list is reachable on small screens. The list is also shown in landscape.
+- iOS: builds declare no non-exempt encryption, so TestFlight no longer holds them for export-compliance review.
+
 ## 0.3.14
 
 ### Added
