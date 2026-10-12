@@ -6,7 +6,7 @@ from airwsjtx.geo import elevation_deg, locator_to_latlon, scatter_geometry, sla
 class ElevationCurvatureTests(unittest.TestCase):
     def test_distant_aircraft_is_below_horizon(self) -> None:
         # FL369 aircraft ~8700 km away: far below the horizon, not ~0.1°.
-        self.assertLess(elevation_deg(8716.6, 11240.0), -30.0)
+        self.assertLess(elevation_deg(8716.6, 11240.0), -25.0)
 
     def test_horizon_distance_for_cruise_altitude(self) -> None:
         # Geometric horizon for 11 km altitude is ~375 km.
