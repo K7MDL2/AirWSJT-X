@@ -304,7 +304,7 @@ jobs:
         run: |
           npx tauri build --target "$TARGET" --bundles app --ci \
             --config src-tauri/tauri.desktop.conf.json \
-            -c '{"bundle":{"macOS":{"entitlements":null}}}'
+            -c '{"bundle":{"macOS":{"entitlements":null,"minimumSystemVersion":"12.0"}}}'
 
       - name: Sign for Mac App Store and build installer package
         env:
