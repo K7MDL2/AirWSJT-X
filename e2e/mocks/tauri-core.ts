@@ -83,6 +83,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     const mock = window as unknown as Record<string, unknown>;
     mock.__mockAircraftRequests = [...(mock.__mockAircraftRequests as unknown[] ?? []), args];
     if (mock.__mockAircraftRateLimited) throw "RATE_LIMITED:1800";
+    if (mock.__mockMobileStates) return { states: mock.__mockMobileStates };
     return args?.provider === "adsbexchange"
       ? { ac: [{ hex: "abc123", flight: "MOBILE", lat: 47.5, lon: -122, alt_geom: 30000, gs: 200, track: 90 }] }
       : { states: [["abc123", "MOBILE", "US", 1000, 1000, -122, 47.5, 9000, false, 100, 90, 0, null, 10000]] };

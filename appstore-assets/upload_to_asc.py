@@ -14,10 +14,18 @@ import requests
 CONFIG_PATH = os.path.expanduser("~/.openclaw/workspace/private/appstore-connect/config.json")
 BUNDLE_ID = "us.ad7np.airwsjt-x"
 METADATA_PATH = Path(__file__).parent / "metadata.json"
-SCREENSHOTS_DIR = Path(__file__).parent / "screenshots" / "mac"
+SCREENSHOTS_ROOT = Path(__file__).parent / "screenshots"
+SCREENSHOTS_DIR = SCREENSHOTS_ROOT / "mac"
+
+def load_config():
+    """API key settings from ASC_KEY_ID / ASC_ISSUER_ID / ASC_KEY_PATH, else the config file."""
+    if os.environ.get("ASC_KEY_ID") and os.environ.get("ASC_ISSUER_ID") and os.environ.get("ASC_KEY_PATH"):
+        return {"key_id": os.environ["ASC_KEY_ID"], "issuer_id": os.environ["ASC_ISSUER_ID"],
+                "key_path": os.environ["ASC_KEY_PATH"]}
+    return json.loads(Path(CONFIG_PATH).read_text())
 
 def get_token():
-    config = json.loads(Path(CONFIG_PATH).read_text())
+    config = load_config()
     key = Path(config["key_path"]).read_text()
     now = int(time.time())
     payload = {"iss": config["issuer_id"], "iat": now, "exp": now + 1200, "aud": "appstoreconnect-v1"}
@@ -64,14 +72,32 @@ def find_app():
     print(f"Found app: {app['attributes']['name']} ({app['id']})")
     return app["id"]
 
-def get_latest_version(app_id):
+PLATFORMS = {
+    "mac": {
+        "asc_platform": "MAC_OS",
+        "dir": "mac",
+        "screenshots": {
+            "APP_DESKTOP": ["01-active-contact-2880x1800.png", "02-qso-in-progress-2880x1800.png"],
+        },
+    },
+    "ios": {
+        "asc_platform": "IOS",
+        "dir": "iphone",
+        "screenshots": {
+            "APP_IPHONE_67": ["iphone/01-tracking-1320x2868.png", "iphone/02-tracking-1320x2868.png"],
+            "APP_IPAD_PRO_3GEN_129": ["ipad/01-tracking-2048x2732.png", "ipad/02-tracking-2048x2732.png"],
+        },
+    },
+}
+
+def get_latest_version(app_id, asc_platform="MAC_OS"):
     data = get(f"/apps/{app_id}/appStoreVersions?limit=10")
     versions = data["data"]
-    mac_versions = [v for v in versions if v["attributes"]["platform"] == "MAC_OS"]
-    if not mac_versions:
-        print("No macOS App Store versions found.")
+    matching = [v for v in versions if v["attributes"]["platform"] == asc_platform]
+    if not matching:
+        print(f"No {asc_platform} App Store versions found.")
         return None
-    v = mac_versions[0]
+    v = matching[0]
     print(f"Latest version: {v['attributes']['versionString']} (state: {v['attributes']['appStoreState']}, id: {v['id']})")
     return v
 
@@ -94,11 +120,13 @@ def get_or_create_localization(version_id, locale="en-US"):
     print(f"Created {locale} localization: {loc_id}")
     return loc_id
 
-def update_localization(loc_id, metadata):
+def update_localization(loc_id, metadata, ios=False):
     en = metadata.get("en-US", {})
     attrs = {}
     if en.get("description"):
         attrs["description"] = en["description"]
+        if ios:
+            attrs["description"] = attrs["description"].replace("• macOS 12.0 or later\n", "")
     if en.get("keywords"):
         attrs["keywords"] = en["keywords"]
     if en.get("promotional_text"):
@@ -234,13 +262,14 @@ def clear_existing_screenshots(set_id):
         delete(f"/appScreenshots/{ss['id']}")
 
 def main():
+    platform = PLATFORMS[sys.argv[1] if len(sys.argv) > 1 else "mac"]
     metadata = json.loads(METADATA_PATH.read_text())
 
     print("=== Finding app ===")
     app_id = find_app()
 
-    print("\n=== Getting latest macOS version ===")
-    version = get_latest_version(app_id)
+    print("\n=== Getting latest App Store version ===")
+    version = get_latest_version(app_id, platform["asc_platform"])
     if not version:
         print("No version to update. Create a version in App Store Connect first.")
         return
@@ -249,24 +278,19 @@ def main():
 
     print("\n=== Updating localization metadata ===")
     loc_id = get_or_create_localization(version_id, "en-US")
-    update_localization(loc_id, metadata)
+    update_localization(loc_id, metadata, ios=platform is PLATFORMS["ios"])
 
     print("\n=== Updating app info ===")
     update_app_info(app_id, metadata)
 
     print("\n=== Uploading screenshots ===")
-    screenshot_map = {
-        "APP_DESKTOP": [
-            ("01-active-contact-2880x1800.png", 0),
-            ("02-qso-in-progress-2880x1800.png", 1),
-        ],
-    }
+    screenshot_map = {t: [(f, n) for n, f in enumerate(files)] for t, files in platform["screenshots"].items()}
 
     for display_type, screenshots in screenshot_map.items():
         set_id = get_or_create_screenshot_set(loc_id, display_type)
         clear_existing_screenshots(set_id)
         for filename, position in screenshots:
-            filepath = SCREENSHOTS_DIR / filename
+            filepath = (SCREENSHOTS_ROOT / filename) if "/" in filename else (SCREENSHOTS_DIR / filename)
             if filepath.exists():
                 upload_screenshot(set_id, filepath, display_type, position)
             else:
