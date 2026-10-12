@@ -5,7 +5,7 @@ import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
 import { haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
-import { isSpeechSupported, speak } from "./lib/speech";
+import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -519,7 +519,7 @@ export default function App() {
   useEffect(() => {
     if (!isSpeechSupported()) return;
     if (!rotatorSpeechEnabled || !rotatorSpeechSource) {
-      if (rotatorSpeechLastAnnouncedRef.current) window.speechSynthesis.cancel();
+      if (rotatorSpeechLastAnnouncedRef.current) cancelSpeech();
       rotatorSpeechLastAnnouncedRef.current = null;
       rotatorSpeechLastProcessedRef.current = null;
       return;

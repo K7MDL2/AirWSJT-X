@@ -416,5 +416,25 @@ class AndroidCIWorkflowTests(unittest.TestCase):
         )
 
 
+class AndroidNativeSpeechTests(unittest.TestCase):
+    """Android WebView lacks speechSynthesis, so a native TTS bridge is injected."""
+
+    def test_overrides_use_the_app_package_and_expose_bridge(self) -> None:
+        import json
+        root = Path(__file__).resolve().parent.parent
+        identifier = json.loads((root / "src-tauri" / "tauri.conf.json").read_text())["identifier"]
+        main = (root / "src-tauri" / "android-overrides" / "MainActivity.kt").read_text()
+        bridge = (root / "src-tauri" / "android-overrides" / "TtsBridge.kt").read_text()
+        self.assertIn(f"package {identifier}", main)
+        self.assertIn(f"package {identifier}", bridge)
+        self.assertIn('addJavascriptInterface(bridge, "AndroidTts")', main)
+        self.assertIn("TextToSpeech", bridge)
+
+    def test_workflow_installs_bridge_after_android_init(self) -> None:
+        text = (Path(__file__).resolve().parent.parent / ".github" / "workflows" / "mobile.yml").read_text()
+        self.assertLess(text.index("android init"), text.index("android-overrides/MainActivity.kt"))
+        self.assertLess(text.index("android-overrides/MainActivity.kt"), text.index("android build"))
+
+
 if __name__ == "__main__":
     unittest.main()

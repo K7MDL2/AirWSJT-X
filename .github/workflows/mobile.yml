@@ -440,6 +440,12 @@ jobs:
       - name: Initialize Tauri Android
         run: npx tauri android init --skip-targets-install
 
+      - name: Install native Android text-to-speech bridge
+        run: |
+          PKG_DIR=src-tauri/gen/android/app/src/main/java/us/ad7np/airwsjtx
+          test -d "$PKG_DIR" || { echo "Missing $PKG_DIR"; find src-tauri/gen/android -name MainActivity.kt; exit 1; }
+          cp src-tauri/android-overrides/MainActivity.kt src-tauri/android-overrides/TtsBridge.kt "$PKG_DIR/"
+
       - name: Add Android location permission
         run: |
           MANIFEST=src-tauri/gen/android/app/src/main/AndroidManifest.xml

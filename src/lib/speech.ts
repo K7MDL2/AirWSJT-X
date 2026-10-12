@@ -9,15 +9,35 @@
  * - Linux (WebKitGTK):   API is present but speak() silently does nothing if
  *                        speech-dispatcher or espeak is not installed.
  *                        No reliable runtime detection of missing backends.
- * - Android WebView:     speechSynthesis is typically absent; isSpeechSupported()
- *                        returns false and all calls become no-ops.
+ * - Android WebView:     speechSynthesis is typically absent; MainActivity exposes
+ *                        native TextToSpeech as window.AndroidTts, used first.
  * - iOS WKWebView:       Works when triggered from a user gesture; background
  *                        utterances may be blocked by the browser.
  */
 
-/** Returns true when the platform exposes a speechSynthesis API. */
+interface AndroidTtsBridge {
+  isAvailable(): boolean;
+  speak(text: string): void;
+  stop(): void;
+}
+
+/** Native Android text-to-speech, injected by MainActivity as `window.AndroidTts`. */
+function androidTts(): AndroidTtsBridge | null {
+  if (typeof window === "undefined") return null;
+  const bridge = (window as unknown as { AndroidTts?: AndroidTtsBridge }).AndroidTts;
+  return bridge && typeof bridge.speak === "function" ? bridge : null;
+}
+
+/** Returns true when the platform exposes native TTS or the speechSynthesis API. */
 export function isSpeechSupported(): boolean {
-  return typeof window !== "undefined" && "speechSynthesis" in window;
+  return androidTts() !== null || (typeof window !== "undefined" && "speechSynthesis" in window);
+}
+
+/** Stops any speech in progress on whichever backend is active. */
+export function cancelSpeech(): void {
+  const native = androidTts();
+  if (native) { native.stop(); return; }
+  if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 
 /**
@@ -32,6 +52,8 @@ export function isSpeechSupported(): boolean {
  */
 export function speak(text: string): void {
   if (!isSpeechSupported()) return;
+  const native = androidTts();
+  if (native) { native.speak(text); return; }
   const ss = window.speechSynthesis;
   ss.cancel();
   if (ss.paused) ss.resume();
