@@ -1189,7 +1189,7 @@ export default function App() {
                       {d.snr >= 0 ? `+${d.snr}` : d.snr}dB
                     </span>
                     <span style={{ color: "var(--text-muted)" }}>{d.delta_freq_hz}Hz</span>
-                    <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis" }}>{d.message ?? ""}</span>
+                    <span>{d.message ?? ""}</span>
                   </div>
                 ))
               }
