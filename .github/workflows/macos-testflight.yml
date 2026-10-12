@@ -40,6 +40,7 @@ jobs:
           cargo.write_text(text)
           PY
 
+
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
@@ -122,6 +123,8 @@ jobs:
             --config src-tauri/tauri.mas.conf.json
 
       - name: Re-sign .app bundle for MAS
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           IDENTITY=$(security find-identity -v -p codesigning "$RUNNER_TEMP/mas-signing.keychain-db" | grep "Apple Distribution" | head -1 | sed 's/.*"\(.*\)".*/\1/')
           APP_PATH=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name "*.app" -type d | head -1)
@@ -129,6 +132,8 @@ jobs:
 
           # Patch CFBundleIdentifier to match the provisioning profile
           /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier us.ad7np.airwsjt-x" "$APP_PATH/Contents/Info.plist"
+          # Set unique build number so Apple accepts each upload
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$APP_PATH/Contents/Info.plist"
           # Set minimum system version for arm64-only
           /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 12.0" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
             /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$APP_PATH/Contents/Info.plist"
