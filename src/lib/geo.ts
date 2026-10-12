@@ -1,4 +1,5 @@
 const R_KM = 6371.0;
+const K_FACTOR = 4 / 3; // standard-atmosphere effective Earth radius factor
 const DEG2RAD = Math.PI / 180;
 const RAD2DEG = 180 / Math.PI;
 
@@ -82,12 +83,13 @@ export function headingWithinTolerance(
   return headingDeltaDeg(aircraftHeading, pathBearing) <= Math.abs(tolerance);
 }
 
-/** Geometric elevation on a spherical Earth; negative when below the horizon. */
+/** Elevation on a K=4/3 effective-radius Earth; negative below the radio horizon. */
 export function elevationDeg(surfaceKm: number, altitudeM: number): number {
   if (surfaceKm <= 0) return 90.0;
-  const theta = surfaceKm / R_KM;
-  const rP = R_KM + altitudeM / 1000.0;
-  return Math.atan2(rP * Math.cos(theta) - R_KM, rP * Math.sin(theta)) * RAD2DEG;
+  const rEff = R_KM * K_FACTOR;
+  const theta = surfaceKm / rEff;
+  const rP = rEff + altitudeM / 1000.0;
+  return Math.atan2(rP * Math.cos(theta) - rEff, rP * Math.sin(theta)) * RAD2DEG;
 }
 
 export function slantRangeKm(surfaceKm: number, altitudeM: number): number {

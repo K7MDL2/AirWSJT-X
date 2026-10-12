@@ -36,6 +36,7 @@ def locator_to_latlon(locator: str) -> tuple[float, float]:
 # ─── Great-circle math ────────────────────────────────────────────────────────
 
 _R_KM = 6371.0
+K_FACTOR = 4.0 / 3.0  # standard-atmosphere effective Earth radius factor
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -71,13 +72,15 @@ def heading_within_tolerance(path_bearing_deg: float, aircraft_heading_deg: floa
 
 def elevation_deg(surface_km: float, altitude_m: float) -> float:
     """Geometric elevation angle (degrees) from a ground station to an aircraft
-    on a spherical Earth. Negative when the aircraft is below the horizon.
+    on an effective-radius Earth (K = 4/3 refraction model). Negative when the
+    aircraft is below the radio horizon.
     """
     if surface_km <= 0:
         return 90.0
-    theta = surface_km / _R_KM
-    r_p = _R_KM + altitude_m / 1000.0
-    return math.degrees(math.atan2(r_p * math.cos(theta) - _R_KM, r_p * math.sin(theta)))
+    r_eff = _R_KM * K_FACTOR
+    theta = surface_km / r_eff
+    r_p = r_eff + altitude_m / 1000.0
+    return math.degrees(math.atan2(r_p * math.cos(theta) - r_eff, r_p * math.sin(theta)))
 
 
 def slant_range_km(surface_km: float, altitude_m: float) -> float:
