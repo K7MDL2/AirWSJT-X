@@ -1,8 +1,10 @@
 {
   "identifier": "us.ad7np.airwsjt-x",
   "bundle": {
+    "category": "public.app-category.utilities",
     "macOS": {
-      "entitlements": "entitlements-mas.plist"
+      "entitlements": "entitlements-mas.plist",
+      "minimumSystemVersion": "12.0"
     }
   }
 }

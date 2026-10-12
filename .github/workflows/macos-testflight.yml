@@ -127,6 +127,20 @@ jobs:
           APP_PATH=$(find src-tauri/target/aarch64-apple-darwin/release/bundle -name "*.app" -type d | head -1)
           echo "Re-signing $APP_PATH with $IDENTITY"
 
+          # Patch CFBundleIdentifier to match the provisioning profile
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier us.ad7np.airwsjt-x" "$APP_PATH/Contents/Info.plist"
+          # Set minimum system version for arm64-only
+          /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion 12.0" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Add :LSMinimumSystemVersion string 12.0" "$APP_PATH/Contents/Info.plist"
+          # Set app category required by App Store
+          /usr/libexec/PlistBuddy -c "Set :LSApplicationCategoryType public.app-category.utilities" "$APP_PATH/Contents/Info.plist" 2>/dev/null || \
+            /usr/libexec/PlistBuddy -c "Add :LSApplicationCategoryType string public.app-category.utilities" "$APP_PATH/Contents/Info.plist"
+
+          echo "=== Info.plist key values ==="
+          /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP_PATH/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" "$APP_PATH/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Print :LSApplicationCategoryType" "$APP_PATH/Contents/Info.plist"
+
           # Embed provisioning profile
           cp "$HOME/Library/MobileDevice/Provisioning Profiles/AirWSJTX_Profile.provisionprofile" "$APP_PATH/Contents/embedded.provisionprofile"
 
