@@ -84,18 +84,20 @@ export function headingWithinTolerance(
 }
 
 /** Elevation on a K=4/3 effective-radius Earth; negative below the radio horizon. */
-export function elevationDeg(surfaceKm: number, altitudeM: number): number {
+export function elevationDeg(surfaceKm: number, altitudeM: number, stationAltM = 0): number {
   if (surfaceKm <= 0) return 90.0;
   const rEff = R_KM * K_FACTOR;
   const theta = surfaceKm / rEff;
+  const rS = rEff + stationAltM / 1000.0;
   const rP = rEff + altitudeM / 1000.0;
-  return Math.atan2(rP * Math.cos(theta) - rEff, rP * Math.sin(theta)) * RAD2DEG;
+  return Math.atan2(rP * Math.cos(theta) - rS, rP * Math.sin(theta)) * RAD2DEG;
 }
 
-export function slantRangeKm(surfaceKm: number, altitudeM: number): number {
+export function slantRangeKm(surfaceKm: number, altitudeM: number, stationAltM = 0): number {
   const theta = surfaceKm / R_KM;
+  const rS = R_KM + stationAltM / 1000.0;
   const rP = R_KM + altitudeM / 1000.0;
-  return Math.sqrt(Math.max(0, R_KM ** 2 + rP ** 2 - 2 * R_KM * rP * Math.cos(theta)));
+  return Math.sqrt(Math.max(0, rS ** 2 + rP ** 2 - 2 * rS * rP * Math.cos(theta)));
 }
 
 export interface ScatterResult {
@@ -115,6 +117,8 @@ export function scatterGeometry(
   latB: number, lonB: number,
   latP: number, lonP: number,
   altitudeM: number,
+  stationAAltM = 0,
+  stationBAltM = 0,
 ): ScatterResult {
   const dA = haversineKm(latA, lonA, latP, lonP);
   const dB = haversineKm(latB, lonB, latP, lonP);
@@ -122,10 +126,10 @@ export function scatterGeometry(
   const azA = bearingDeg(latA, lonA, latP, lonP);
   const azB = bearingDeg(latB, lonB, latP, lonP);
   const azAB = bearingDeg(latA, lonA, latB, lonB);
-  const elA = elevationDeg(dA, altitudeM);
-  const elB = elevationDeg(dB, altitudeM);
-  const srA = slantRangeKm(dA, altitudeM);
-  const srB = slantRangeKm(dB, altitudeM);
+  const elA = elevationDeg(dA, altitudeM, stationAAltM);
+  const elB = elevationDeg(dB, altitudeM, stationBAltM);
+  const srA = slantRangeKm(dA, altitudeM, stationAAltM);
+  const srB = slantRangeKm(dB, altitudeM, stationBAltM);
   const offPath = Math.abs(((azA - azAB + 180) % 360 + 360) % 360 - 180);
 
   let score: number;

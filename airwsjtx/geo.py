@@ -70,7 +70,7 @@ def heading_within_tolerance(path_bearing_deg: float, aircraft_heading_deg: floa
     return heading_delta_deg(aircraft_heading_deg, path_bearing_deg) <= abs(tolerance_deg)
 
 
-def elevation_deg(surface_km: float, altitude_m: float) -> float:
+def elevation_deg(surface_km: float, altitude_m: float, station_alt_m: float = 0.0) -> float:
     """Geometric elevation angle (degrees) from a ground station to an aircraft
     on an effective-radius Earth (K = 4/3 refraction model). Negative when the
     aircraft is below the radio horizon.
@@ -79,15 +79,17 @@ def elevation_deg(surface_km: float, altitude_m: float) -> float:
         return 90.0
     r_eff = _R_KM * K_FACTOR
     theta = surface_km / r_eff
+    r_s = r_eff + station_alt_m / 1000.0
     r_p = r_eff + altitude_m / 1000.0
-    return math.degrees(math.atan2(r_p * math.cos(theta) - r_eff, r_p * math.sin(theta)))
+    return math.degrees(math.atan2(r_p * math.cos(theta) - r_s, r_p * math.sin(theta)))
 
 
-def slant_range_km(surface_km: float, altitude_m: float) -> float:
+def slant_range_km(surface_km: float, altitude_m: float, station_alt_m: float = 0.0) -> float:
     """Straight-line distance (km) from a ground station to an aircraft on a spherical Earth."""
     theta = surface_km / _R_KM
+    r_s = _R_KM + station_alt_m / 1000.0
     r_p = _R_KM + altitude_m / 1000.0
-    return math.sqrt(max(0.0, _R_KM**2 + r_p**2 - 2 * _R_KM * r_p * math.cos(theta)))
+    return math.sqrt(max(0.0, r_s**2 + r_p**2 - 2 * r_s * r_p * math.cos(theta)))
 
 
 # ─── Scatter geometry ─────────────────────────────────────────────────────────
@@ -97,6 +99,8 @@ def scatter_geometry(
     lat_b: float, lon_b: float,
     lat_p: float, lon_p: float,
     altitude_m: float,
+    station_a_alt_m: float = 0.0,
+    station_b_alt_m: float = 0.0,
 ) -> dict:
     """
     Compute full scatter geometry for an aircraft P between stations A and B.
@@ -119,12 +123,12 @@ def scatter_geometry(
     az_ab = bearing_deg(lat_a, lon_a, lat_b, lon_b)
 
     # Elevations
-    el_a = elevation_deg(d_a, altitude_m)
-    el_b = elevation_deg(d_b, altitude_m)
+    el_a = elevation_deg(d_a, altitude_m, station_a_alt_m)
+    el_b = elevation_deg(d_b, altitude_m, station_b_alt_m)
 
     # Slant ranges
-    sr_a = slant_range_km(d_a, altitude_m)
-    sr_b = slant_range_km(d_b, altitude_m)
+    sr_a = slant_range_km(d_a, altitude_m, station_a_alt_m)
+    sr_b = slant_range_km(d_b, altitude_m, station_b_alt_m)
 
     # Off-path: angle between A→P bearing and A→B bearing
     off_path = abs((az_a - az_ab + 180) % 360 - 180)

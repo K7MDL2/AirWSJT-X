@@ -25,5 +25,14 @@ class ElevationCurvatureTests(unittest.TestCase):
         self.assertEqual(geo["scatter_score"], 0.0)
 
 
+class StationAltitudeTests(unittest.TestCase):
+    def test_higher_station_sees_lower_elevation_and_shorter_range(self):
+        self.assertLess(elevation_deg(100.0, 10000.0, 2000.0), elevation_deg(100.0, 10000.0))
+        self.assertLess(slant_range_km(100.0, 10000.0, 2000.0), slant_range_km(100.0, 10000.0) + 1e-6)
+
+    def test_default_station_altitude_is_sea_level(self):
+        self.assertEqual(elevation_deg(200.0, 9000.0), elevation_deg(200.0, 9000.0, 0.0))
+
+
 if __name__ == "__main__":
     unittest.main()
