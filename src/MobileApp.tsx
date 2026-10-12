@@ -740,7 +740,7 @@ function SettingsField({
 // ─── Styles ─────────────────────────────────────────────────────────────────
 
 const containerStyle: React.CSSProperties = {
-  display: "flex", flexDirection: "column", height: "100vh",
+  display: "flex", flexDirection: "column", height: "100vh", maxHeight: "100dvh",
   background: "#0d1117", color: "#c9d1d9",
   fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
   overflow: "hidden",
@@ -801,8 +801,8 @@ const selectedCardStyle: React.CSSProperties = {
 };
 
 const listContainerStyle: React.CSSProperties = {
-  flex: 1, overflowY: "auto", borderTop: "1px solid #21262d",
-  WebkitOverflowScrolling: "touch",
+  flex: 1, minHeight: 0, overflowY: "auto", borderTop: "1px solid #21262d",
+  WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y",
 };
 
 const listItemStyle: React.CSSProperties = {
