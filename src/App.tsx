@@ -177,6 +177,7 @@ type PortableViewMode = "hidden" | "panel" | "overlay";
 const ROTATOR_SPEECH_ENABLED_KEY = "airwsjtx.rotatorSpeech.enabled";
 const ROTATOR_SPEECH_THRESHOLD_KEY = "airwsjtx.rotatorSpeech.thresholdDeg";
 const ROTATOR_SPEECH_INTERVAL_KEY = "airwsjtx.rotatorSpeech.intervalSec";
+const ROTATOR_SPEECH_MIGRATED_KEY = "airwsjtx.rotatorSpeech.threshold1degMigrated";
 
 function normalizeGrid(grid: string | null | undefined): string | null {
   const normalized = (grid ?? "").trim().toUpperCase();
@@ -204,7 +205,12 @@ export default function App() {
   const [rotatorTargetEl, setRotatorTargetEl] = useState<number | null>(null);
   const [rotatorSpeechEnabled, setRotatorSpeechEnabled] = useState(() => localStorage.getItem(ROTATOR_SPEECH_ENABLED_KEY) === "1");
   const [rotatorSpeechThresholdDeg, setRotatorSpeechThresholdDeg] = useState(() => {
-    const raw = localStorage.getItem(ROTATOR_SPEECH_THRESHOLD_KEY);
+    let raw = localStorage.getItem(ROTATOR_SPEECH_THRESHOLD_KEY);
+    // The old 3° default was auto-persisted; move it to the new 1° default once.
+    if (localStorage.getItem(ROTATOR_SPEECH_MIGRATED_KEY) !== "1") {
+      localStorage.setItem(ROTATOR_SPEECH_MIGRATED_KEY, "1");
+      if (raw === "3") raw = null;
+    }
     if (raw === null) return 1;
     const value = Number(raw);
     return Number.isFinite(value) && value > 0 ? value : 1;
@@ -271,6 +277,7 @@ export default function App() {
   } | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const rotatorSpeechLastAnnouncedRef = useRef<{ az: number; el: number; at: number; source: "rotator" | "manual" } | null>(null);
+  const [speechRecheck, setSpeechRecheck] = useState(0);
   const rotatorSpeechLastProcessedRef = useRef<{ az: number; el: number; source: "rotator" | "manual" } | null>(null);
 
   const addLog = useCallback((msg: string) => {
@@ -520,19 +527,29 @@ export default function App() {
     const { az, el, source, announceFirstUpdate } = rotatorSpeechSource;
     const processed = rotatorSpeechLastProcessedRef.current;
     if (processed && processed.source === source && processed.az === az && processed.el === el) return;
-    rotatorSpeechLastProcessedRef.current = { az, el, source };
     const now = Date.now();
     const last = rotatorSpeechLastAnnouncedRef.current;
     const speechText = `Azimuth ${Math.round(az)}, Elevation ${Math.round(el)}`;
     if (!last || last.source !== source) {
+      rotatorSpeechLastProcessedRef.current = { az, el, source };
       if (announceFirstUpdate) speak(speechText);
       rotatorSpeechLastAnnouncedRef.current = { az, el, at: now, source };
       return;
     }
     const azDelta = Math.abs(((az - last.az + 540) % 360) - 180);
     const elDelta = Math.abs(el - last.el);
-    if (Math.max(azDelta, elDelta) < rotatorSpeechThresholdDeg) return;
-    if (now - last.at < rotatorSpeechIntervalSec * 1000) return;
+    if (Math.max(azDelta, elDelta) < rotatorSpeechThresholdDeg) {
+      rotatorSpeechLastProcessedRef.current = { az, el, source };
+      return;
+    }
+    const waitMs = rotatorSpeechIntervalSec * 1000 - (now - last.at);
+    if (waitMs > 0) {
+      // Change is big enough but too soon: re-evaluate once the interval elapses
+      // instead of dropping it when the position then stops changing.
+      const timer = window.setTimeout(() => setSpeechRecheck((n) => n + 1), waitMs + 20);
+      return () => window.clearTimeout(timer);
+    }
+    rotatorSpeechLastProcessedRef.current = { az, el, source };
     speak(speechText);
     rotatorSpeechLastAnnouncedRef.current = { az, el, at: now, source };
   }, [
@@ -543,6 +560,7 @@ export default function App() {
     rotatorSpeechSource,
     rotatorSpeechThresholdDeg,
     rotatorSpeechIntervalSec,
+    speechRecheck,
   ]);
 
   async function startQso() {
