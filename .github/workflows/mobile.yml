@@ -123,7 +123,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # TestFlight build. Manual only (workflow_dispatch with testflight=true) and
+  # TestFlight build. Runs on every v* tag push (or workflow_dispatch with testflight=true) and
   # needs the secrets listed below; it fails fast with a clear message if any
   # are missing. Uses an App Store Connect API key for automatic provisioning,
   # so no provisioning profile has to be stored in the repo or secrets.
@@ -134,7 +134,7 @@ jobs:
   #   APPLE_API_ISSUER           App Store Connect issuer id
   #   APPLE_API_KEY_P8           contents of AuthKey_<id>.p8
   ios-testflight:
-    if: github.event_name == 'workflow_dispatch' && inputs.testflight
+    if: github.event_name == 'push' || inputs.testflight
     runs-on: macos-latest
     env:
       APPLE_DEVELOPMENT_TEAM: ${{ secrets.APPLE_TEAM_ID }}
