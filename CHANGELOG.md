@@ -1,10 +1,20 @@
 # Changelog
 
-## Unreleased
+## 0.3.14
+
+### Added
+- Aircraft elevation now uses a K = 4/3 effective Earth radius (standard atmospheric refraction), so the radio horizon is more realistic.
+- Station altitude is now part of the elevation and slant-range geometry. Desktop: new "Alt m" field next to MY callsign/grid. Mobile: the device GPS altitude is used automatically (location permission added for iOS and Android).
+- Android speech callouts now use the phone's native text-to-speech engine, since the Android WebView has no Web Speech API.
+- iOS app (TestFlight) and Mac App Store/TestFlight builds, both using bundle ID `us.ad7np.airwsjt-x`.
 
 ### Fixed
-- The manual Mac App Store / TestFlight workflow no longer fails App Store Connect validation (error 90869): the macOS bundle now declares a 12.0 minimum system version.
+- Speech callouts now announce whenever azimuth or elevation changes by at least 1° (previously 3°); changes that arrived inside the minimum interval are no longer dropped, and the mobile app handles azimuth wrap-around at north.
+- The mobile aircraft list now scrolls on Android.
+- Mac App Store / TestFlight: nested executables are signed without the application-identifier entitlement (ITMS-90885), and the app declares a 12.0 minimum macOS (error 90869).
 - Rebased the iOS/macOS TestFlight workflow on top of the current Android signing/flavor workflow, fixing "Expected multiple APK flavors, found 1" in manual Mobile Build runs.
+
+> Note: the macOS bundle ID change moves the app's settings folder, so existing Mac installs lose saved aircraft settings once (Keychain credentials are unaffected).
 
 ## 0.3.12
 
