@@ -440,6 +440,13 @@ jobs:
       - name: Initialize Tauri Android
         run: npx tauri android init --skip-targets-install
 
+      - name: Add Android location permission
+        run: |
+          MANIFEST=src-tauri/gen/android/app/src/main/AndroidManifest.xml
+          grep -q ACCESS_FINE_LOCATION "$MANIFEST" || \
+            sed -i 's|<uses-permission android:name="android.permission.INTERNET" />|&\n    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />|' "$MANIFEST"
+          grep ACCESS_FINE_LOCATION "$MANIFEST"
+
       - name: Build Android ARM APK
         run: |
           rm -rf src-tauri/gen/android/app/build/outputs/apk

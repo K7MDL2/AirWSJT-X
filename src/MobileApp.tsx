@@ -1,3 +1,4 @@
+import { watchGpsAltitude } from "./lib/gps";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   locatorToLatlon,
@@ -273,6 +274,7 @@ export default function MobileApp() {
   const pollerRef = useRef<OpenSkyPoller | null>(null);
   const speechLastRef = useRef<{ az: number; el: number; at: number; icao24: string } | null>(null);
   const compassHeadingRef = useRef<number | null>(null);
+  const stationAltRef = useRef(0);
 
   const saveSettings = useCallback((next: MobileSettings) => {
     setSettings(next);
@@ -416,8 +418,8 @@ export default function MobileApp() {
         const mapped: MobileAircraft[] = withPos.map((a) => {
           const dist = haversineKm(myLat, myLon, a.lat!, a.lon!);
           const az = bearingDeg(myLat, myLon, a.lat!, a.lon!);
-          const el = elevationDeg(dist, a.altitude_m!);
-          const range = slantRangeKm(dist, a.altitude_m!);
+          const el = elevationDeg(dist, a.altitude_m!, stationAltRef.current);
+          const range = slantRangeKm(dist, a.altitude_m!, stationAltRef.current);
           return {
             icao24: a.icao24,
             callsign: a.callsign || a.icao24,
@@ -453,6 +455,9 @@ export default function MobileApp() {
 
     return () => { disposed = true; poller.stop(); };
   }, [hasStation, settings.myGrid, settings.aircraftSource, accountRevision]);
+
+  // GPS altitude feeds the station height used for elevation/range
+  useEffect(() => watchGpsAltitude((alt) => { stationAltRef.current = alt ?? 0; }), []);
 
   // Speech
   useEffect(() => {
