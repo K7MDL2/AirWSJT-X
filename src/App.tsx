@@ -205,9 +205,9 @@ export default function App() {
   const [rotatorSpeechEnabled, setRotatorSpeechEnabled] = useState(() => localStorage.getItem(ROTATOR_SPEECH_ENABLED_KEY) === "1");
   const [rotatorSpeechThresholdDeg, setRotatorSpeechThresholdDeg] = useState(() => {
     const raw = localStorage.getItem(ROTATOR_SPEECH_THRESHOLD_KEY);
-    if (raw === null) return 3;
+    if (raw === null) return 1;
     const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? value : 3;
+    return Number.isFinite(value) && value > 0 ? value : 1;
   });
   const [rotatorSpeechIntervalSec, setRotatorSpeechIntervalSec] = useState(() => {
     const raw = localStorage.getItem(ROTATOR_SPEECH_INTERVAL_KEY);

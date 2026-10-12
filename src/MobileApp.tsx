@@ -468,8 +468,8 @@ export default function MobileApp() {
     // When the selected aircraft changes, bypass the time cooldown so the new
     // aircraft is announced immediately (the position-delta guard still applies).
     const sameAircraft = last?.icao24 === trackedAc.icao24;
-    if (sameAircraft && last && now - last.at < 3000) return;
-    if (sameAircraft && last && Math.abs(trackedAc.az - last.az) < 3 && Math.abs(trackedAc.el - last.el) < 2) return;
+    if (sameAircraft && last && now - last.at < 2000) return;
+    if (sameAircraft && last && Math.max(Math.abs(((trackedAc.az - last.az + 540) % 360) - 180), Math.abs(trackedAc.el - last.el)) < 1) return;
     speak(`${trackedAc.callsign}, Azimuth ${Math.round(trackedAc.az)}, Elevation ${Math.round(trackedAc.el)}`);
     speechLastRef.current = { az: trackedAc.az, el: trackedAc.el, at: now, icao24: trackedAc.icao24 };
   }, [trackedAc, settings.speechEnabled]);
