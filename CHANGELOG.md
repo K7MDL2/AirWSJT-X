@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- The manual Mac App Store / TestFlight workflow no longer fails App Store Connect validation (error 90869): the macOS bundle now declares a 12.0 minimum system version.
+- Rebased the iOS/macOS TestFlight workflow on top of the current Android signing/flavor workflow, fixing "Expected multiple APK flavors, found 1" in manual Mobile Build runs.
+
 ## 0.3.12
 
 ### Fixed
