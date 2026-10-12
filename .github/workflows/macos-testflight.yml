@@ -173,10 +173,20 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
         run: |
-          # Write the API key for altool/notarytool
-          API_KEY_DIR="$HOME/.private_keys"
+          API_KEY_DIR="$HOME/private_keys"
           mkdir -p "$API_KEY_DIR"
-          echo -n "$APPLE_API_KEY_P8" | base64 --decode -o "$API_KEY_DIR/AuthKey_${APPLE_API_KEY}.p8"
+          KEY_FILE="$API_KEY_DIR/AuthKey_${APPLE_API_KEY}.p8"
+
+          # The secret may be base64-encoded or raw PEM — detect and handle both
+          if printf '%s' "$APPLE_API_KEY_P8" | head -c 30 | grep -q "BEGIN PRIVATE KEY"; then
+            printf '%s' "$APPLE_API_KEY_P8" > "$KEY_FILE"
+          else
+            printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$KEY_FILE"
+          fi
+
+          echo "=== Verify API key ==="
+          head -1 "$KEY_FILE"
+          wc -c "$KEY_FILE"
 
           PKG_PATH=$RUNNER_TEMP/AirWSJT-X.pkg
 
@@ -185,7 +195,8 @@ jobs:
             --type osx \
             --file "$PKG_PATH" \
             --apiKey "$APPLE_API_KEY" \
-            --apiIssuer "$APPLE_API_ISSUER"
+            --apiIssuer "$APPLE_API_ISSUER" \
+            --private-key-dir "$API_KEY_DIR"
 
       - name: Upload .pkg as artifact
         if: always()
