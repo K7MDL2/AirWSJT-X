@@ -296,8 +296,8 @@ export default function RotatorPanel({
 }: RotatorPanelProps) {
   const [manualAz, setManualAz] = useState(currentAz.toFixed(1));
   const [manualEl, setManualEl] = useState(currentEl.toFixed(1));
-  const [host, setHost] = useState("127.0.0.1");
-  const [port, setPort] = useState("4533");
+  const [host, setHost] = useState(() => localStorage.getItem("rotatorHost") || "127.0.0.1");
+  const [port, setPort] = useState(() => localStorage.getItem("rotatorPort") || "4533");
   const lastSpeechPreviewAtRef = useRef(0);
 
   // Sync manual fields when target changes
@@ -390,7 +390,11 @@ export default function RotatorPanel({
               <input value={port} onChange={e => setPort(e.target.value)}
                 placeholder="port" style={{ ...inputStyle, width: 60 }} />
               <button className="btn-secondary" style={smBtn}
-                onClick={() => onConnect(host, parseInt(port) || 4533)}>
+                onClick={() => {
+                  localStorage.setItem("rotatorHost", host);
+                  localStorage.setItem("rotatorPort", port);
+                  onConnect(host, parseInt(port) || 4533);
+                }}>
                 Connect
               </button>
             </>

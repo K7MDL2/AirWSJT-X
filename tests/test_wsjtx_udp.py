@@ -112,13 +112,17 @@ class WSJTXStatusParsingTests(unittest.TestCase):
 class WSJTXListenerFilterTests(unittest.TestCase):
     def test_without_filter_accepts_any_source(self) -> None:
         listener = WSJTXListener()
-        self.assertTrue(listener._matches_source("Rig-A"))
-        self.assertTrue(listener._matches_source("Rig-B"))
+        self.assertTrue(listener._matches_source("WSJT-X - Rig-A"))
+        self.assertTrue(listener._matches_source("JTDX - Rig-B"))
+        self.assertFalse(listener._matches_source("ACLog"))
+        self.assertFalse(listener._matches_source("JTAlert"))
 
     def test_filter_matches_app_id_case_insensitive(self) -> None:
         listener = WSJTXListener(rig_name_filter="my-rig")
-        self.assertTrue(listener._matches_source("MY-RIG"))
-        self.assertFalse(listener._matches_source("other-rig"))
+        self.assertTrue(listener._matches_source("WSJT-X - MY-RIG"))
+        self.assertTrue(listener._matches_source("WSJT-X-MY-RIG"))
+        self.assertFalse(listener._matches_source("WSJT-X - other-rig"))
+        self.assertFalse(listener._matches_source("ACLog"))
 
     def test_filter_matches_status_config_name(self) -> None:
         listener = WSJTXListener(rig_name_filter="home-shack")
@@ -138,7 +142,49 @@ class WSJTXListenerFilterTests(unittest.TestCase):
         listener.set_rig_name_filter("Rig-B")
         self.assertEqual(listener.get_rig_name_filter(), "Rig-B")
         self.assertEqual(disconnected, [True])
-        self.assertTrue(listener._matches_source("Rig-B"))
+        self.assertTrue(listener._matches_source("WSJT-X - Rig-B"))
+
+    def test_ignores_non_wsjtx_apps_like_aclog(self) -> None:
+        on_status = Mock()
+        on_decode = Mock()
+        connected: list[str] = []
+        listener = WSJTXListener(
+            on_status=on_status,
+            on_decode=on_decode,
+            on_connected=lambda app: connected.append(app),
+        )
+        # ACLog heartbeat should be completely ignored
+        aclog_hb = (
+            struct.pack(">III", WSJTX_MAGIC, 2, MSG_HEARTBEAT)
+            + _enc_str("ACLog") + struct.pack(">I", 3)
+            + _enc_str("7.2") + _enc_str("release")
+        )
+        self.assertFalse(listener._handle_datagram(aclog_hb))
+        self.assertEqual(listener.get_known_rigs(), [])
+        self.assertFalse(listener._connected)
+        self.assertEqual(connected, [])
+
+        # Third-party utilities (JTAlert, GridTracker, Log4OM, N1MM) should also be ignored
+        for companion in ("JTAlert", "GridTracker", "Log4OM", "N1MM"):
+            pkt = (
+                struct.pack(">III", WSJTX_MAGIC, 2, MSG_HEARTBEAT)
+                + _enc_str(companion) + struct.pack(">I", 3)
+                + _enc_str("1.0") + _enc_str("release")
+            )
+            self.assertFalse(listener._handle_datagram(pkt))
+            self.assertEqual(listener.get_known_rigs(), [])
+
+        # Legitimate WSJT-X heartbeat connects and is remembered
+        wsjtx_hb = (
+            struct.pack(">III", WSJTX_MAGIC, 2, MSG_HEARTBEAT)
+            + _enc_str("WSJT-X") + struct.pack(">I", 3)
+            + _enc_str("2.7.0") + _enc_str("release")
+        )
+        self.assertTrue(listener._handle_datagram(wsjtx_hb))
+        self.assertEqual(listener.get_known_rigs(), [{"app_id": "WSJT-X", "config_name": None}])
+        self.assertTrue(listener._connected)
+        self.assertEqual(connected, ["WSJT-X"])
+
 
 
 class _FakeSocket:
@@ -284,12 +330,12 @@ class WSJTXListenerSocketTests(unittest.TestCase):
         listener = WSJTXListener(rig_name_filter="Selected-Rig", on_status=on_status)
         heartbeat = (
             struct.pack(">III", WSJTX_MAGIC, 2, MSG_HEARTBEAT)
-            + _enc_str("Heartbeat-Rig") + struct.pack(">I", 3)
+            + _enc_str("WSJT-X - Heartbeat-Rig") + struct.pack(">I", 3)
             + _enc_str("2.7") + _enc_str("release")
         )
         decode = (
             struct.pack(">III", WSJTX_MAGIC, 2, MSG_DECODE)
-            + _enc_str("Decode-Rig") + struct.pack(">BIidI", 1, 0, -10, 0.2, 1000)
+            + _enc_str("WSJT-X - Decode-Rig") + struct.pack(">BIidI", 1, 0, -10, 0.2, 1000)
             + _enc_str("FT8") + _enc_str("CQ K7MDL CN87") + b"\x00\x00"
         )
         status = _build_status_packet("Q65", 15)
@@ -304,12 +350,13 @@ class WSJTXListenerSocketTests(unittest.TestCase):
 
         sock = Mock()
         sock.recvfrom.side_effect = receive
-        with patch.object(listener, "_make_socket", return_value=sock):
+        with patch.object(listener, "_make_socket", return_value=sock), \
+             patch.object(listener, "_make_query_socket", return_value=None):
             listener._run()
         self.assertEqual(listener.get_known_rigs(), [
-            {"app_id": "Decode-Rig", "config_name": None},
-            {"app_id": "Heartbeat-Rig", "config_name": None},
             {"app_id": "WSJT-X", "config_name": None},
+            {"app_id": "WSJT-X - Decode-Rig", "config_name": None},
+            {"app_id": "WSJT-X - Heartbeat-Rig", "config_name": None},
         ])
         self.assertFalse(listener._connected)
         on_status.assert_not_called()
@@ -328,17 +375,18 @@ class WSJTXListenerSocketTests(unittest.TestCase):
 
     def test_known_rigs_preserve_names_and_return_independent_snapshots(self) -> None:
         listener = WSJTXListener()
-        listener._remember_rig("Rig-A", "Home")
-        listener._remember_rig("Rig-A")
+        listener._remember_rig("WSJT-X - Rig-A", "Home")
+        listener._remember_rig("WSJT-X - Rig-A")
         listener._remember_rig("")
+        listener._remember_rig("ACLog")  # Should be ignored
         rigs = listener.get_known_rigs()
-        self.assertEqual(rigs, [{"app_id": "Rig-A", "config_name": "Home"}])
+        self.assertEqual(rigs, [{"app_id": "WSJT-X - Rig-A", "config_name": "Home"}])
         rigs[0]["config_name"] = "Modified"
         listener.set_rig_name_filter("Rig-B")
         self.assertEqual(listener.get_known_rigs(), [
-            {"app_id": "Rig-A", "config_name": "Home"},
+            {"app_id": "WSJT-X - Rig-A", "config_name": "Home"},
         ])
-        listener._remember_rig("Rig-A", "Portable")
+        listener._remember_rig("WSJT-X - Rig-A", "Portable")
         self.assertEqual(listener.get_known_rigs()[0]["config_name"], "Portable")
 
     def test_socket_setup_without_reuseport(self) -> None:
