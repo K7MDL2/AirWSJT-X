@@ -62,6 +62,19 @@ def _str(d: bytes, o: int) -> tuple[str | None, int]:
     return d[o : o + ln].decode("utf-8", "replace"), o + ln
 
 
+def is_wsjtx_app(app_id: str | None) -> bool:
+    """Return True if app_id represents a WSJT-X (or JTDX) instance.
+
+    AirWSJT-X only processes messages from WSJT-X or JTDX. Other applications
+    broadcasting on the WSJT-X UDP port or multicast group (such as ACLog, JTAlert,
+    GridTracker, N1MM, Log4OM) are ignored.
+    """
+    if not app_id:
+        return False
+    normalized = app_id.strip().casefold()
+    return normalized.startswith(("wsjt", "jtdx"))
+
+
 # ─── Message dataclasses ──────────────────────────────────────────────────────
 
 @dataclass
@@ -314,7 +327,7 @@ class WSJTXListener:
             return self._rig_name_filter
 
     def _remember_rig(self, app_id: str, config_name: str | None = None) -> None:
-        if not app_id:
+        if not app_id or not is_wsjtx_app(app_id):
             return
         with self._state_lock:
             self._known_rigs[app_id] = config_name or self._known_rigs.get(app_id)
@@ -329,6 +342,9 @@ class WSJTXListener:
             ]
 
     def _matches_source(self, app_id: str, status: WSJTXStatus | None = None) -> bool:
+        if not is_wsjtx_app(app_id):
+            return False
+
         with self._state_lock:
             rig_name_filter = self._rig_name_filter
             active_app_id = self._active_app_id
@@ -339,6 +355,10 @@ class WSJTXListener:
             return True
 
         candidates = [app_id]
+        if " - " in app_id:
+            candidates.append(app_id.split(" - ", 1)[1])
+        elif "-" in app_id and app_id.casefold().startswith(("wsjt-x-", "jtdx-")):
+            candidates.append(app_id.split("-", 2)[-1])
         if status and status.config_name:
             candidates.append(status.config_name)
         expected = rig_name_filter.casefold()
@@ -430,6 +450,9 @@ class WSJTXListener:
         if app_id == self.client_id:
             return False
 
+        if not is_wsjtx_app(app_id):
+            return False
+
         if msg_type == MSG_STATUS:
             st = parse_status(data)
             if st:
@@ -463,6 +486,15 @@ class WSJTXListener:
                 return True
         return False
 
+    def _make_query_socket(self) -> socket.socket | None:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.settimeout(0.05)
+            sock.bind(("127.0.0.1", 0))
+            return sock
+        except OSError:
+            return None
+
     def _run(self) -> None:
         try:
             sock = self._make_socket()
@@ -477,12 +509,7 @@ class WSJTXListener:
 
         query_sock: socket.socket | None = None
         if not self._active_query_mode:
-            try:
-                query_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-                query_sock.settimeout(0.05)
-                query_sock.bind(("127.0.0.1", 0))
-            except OSError:
-                query_sock = None
+            query_sock = self._make_query_socket()
 
         heartbeat = self._build_heartbeat()
         last_heartbeat = 0.0

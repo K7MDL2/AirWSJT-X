@@ -2,7 +2,25 @@
 	"version": "2.0.0",
 	"tasks": [
 		{
-			"label": "AirWSJT-X: Build",
+			"label": "AirWSJT-X: Build Android APK",
+			"type": "shell",
+			"command": "npm",
+			"args": [
+				"run",
+				"tauri",
+				"--",
+				"android",
+				"build",
+				"--apk"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"options": {
+				"cwd": "${workspaceFolder}"
+			}
+		},
+		{
+			"label": "AirWSJT-X: Desktop Build",
 			"type": "shell",
 			"command": "npm",
 			"args": [
@@ -12,7 +30,7 @@
 				"build",
 				"--no-bundle",
 				"--config",
-				"src-tauri\\tauri.desktop.conf.json"
+				"src-tauri/tauri.desktop.conf.json"
 			],
 			"isBackground": false,
 			"problemMatcher": [
@@ -27,7 +45,28 @@
 			}
 		},
 		{
-			"label": "AirWSJT-X: Run",
+			"label": "AirWSJT-X: Desktop Run",
+			"type": "shell",
+			"command": "${workspaceFolder}/src-tauri/target/release/airwsjtx",
+			"windows": {
+				"command": "${workspaceFolder}\\src-tauri\\target\\release\\airwsjtx.exe"
+			},
+			"options": {
+				"cwd": "${workspaceFolder}"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "AirWSJT-X: Desktop Build and Run",
+			"dependsOrder": "sequence",
+			"dependsOn": [
+				"AirWSJT-X: Desktop Build",
+				"AirWSJT-X: Desktop Run"
+			],
+			"problemMatcher": []
+		},
+		{
+			"label": "AirWSJT-X: Desktop Dev",
 			"type": "shell",
 			"command": "npm",
 			"args": [
@@ -36,17 +75,11 @@
 				"--",
 				"dev",
 				"--config",
-				"src-tauri\\tauri.desktop.conf.json"
+				"src-tauri/tauri.desktop.conf.json"
 			],
 			"options": {
 				"cwd": "${workspaceFolder}"
 			},
-			"problemMatcher": []
-		},
-		{
-			"label": "AirWSJT-X: Build and Run",
-			"dependsOrder": "sequence",
-			"dependsOn": ["AirWSJT-X: Run"],
 			"problemMatcher": []
 		}
 	]
