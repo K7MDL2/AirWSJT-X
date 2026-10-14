@@ -26,7 +26,7 @@ jobs:
         run: npx playwright test --config playwright.appstore.config.ts
 
       - name: Upload screenshots
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: appstore-screenshots
           path: appstore-assets/screenshots/
