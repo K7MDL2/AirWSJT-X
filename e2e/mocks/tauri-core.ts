@@ -89,6 +89,15 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
       : { states: [["abc123", "MOBILE", "US", 1000, 1000, -122, 47.5, 9000, false, 100, 90, 0, null, 10000]] };
   }
 
+  if (cmd === "fetch_mobile_dump1090") {
+    const mock = window as unknown as Record<string, unknown>;
+    mock.__mockDump1090Requests = [...(mock.__mockDump1090Requests as unknown[] ?? []), args];
+    return { aircraft: [{
+      icao24: "abc123", callsign: "DUMP1090", lat: 47.5, lon: -122, altitude_m: 9000,
+      velocity_ms: 200, heading_deg: 90, vertical_rate_ms: 0, on_ground: false,
+    }] };
+  }
+
   if (cmd === "send_to_sidecar" && args?.message) {
     const msg = JSON.parse(args.message as string) as {
       id: string;

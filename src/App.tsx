@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
-import Dump1090Source from "./Dump1090Source";
+import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
 import { haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
@@ -149,6 +149,10 @@ async function rpc(method: string, params: Record<string, unknown> = {}): Promis
     invoke("send_to_sidecar", { message: msg }).catch(reject);
   });
 }
+
+const loadDump1090Host = () => rpc("airscout_get_dump1090_host") as Promise<Dump1090Host>;
+const saveDump1090Host = (host: string) =>
+  rpc("airscout_set_dump1090_host", { host }) as Promise<Dump1090Host>;
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
 
@@ -1359,7 +1363,7 @@ export default function App() {
                 })}
               </div>
               <AircraftAccounts onLog={addLog} />
-              <Dump1090Source rpc={rpc} onLog={addLog} />
+              <Dump1090Source load={loadDump1090Host} save={saveDump1090Host} onLog={addLog} />
               {sourceStatus?.sources?.adsbexchange?.message && (
                 <div style={{ fontSize: 10, color: "var(--yellow)" }}>
                   ADS-B Exchange: {sourceStatus.sources.adsbexchange.message}

@@ -4,6 +4,7 @@
 
 ### Added
 - Desktop: new **dump1090 source** section below **Aircraft accounts** to set the IP address or hostname of a remote dump1090/readsb receiver (port stays 30003). The address is saved, applied immediately, and defaults to `127.0.0.1`.
+- Mobile: new **dump1090 source** section in Settings, below **Aircraft accounts**, to read aircraft from a dump1090/readsb receiver on the local network (port 30003). Saving an address selects the new "dump1090 (network)" aircraft source; **Disable dump1090** clears it and returns to OpenSky. iOS builds declare a local-network usage description for this.
 
 ## 0.3.15
 

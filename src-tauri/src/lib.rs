@@ -10,6 +10,9 @@ mod mobile_storage;
 #[cfg(any(mobile, test))]
 #[cfg_attr(not(mobile), allow(dead_code))]
 mod mobile_aircraft;
+#[cfg(any(mobile, test))]
+#[cfg_attr(not(mobile), allow(dead_code))]
+mod mobile_dump1090;
 
 const REMOTE_DB_URL: &str = "https://ad7np.us/RoverAIM/DB";
 
@@ -56,7 +59,8 @@ async fn send_to_sidecar(
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(mobile)]
-    let builder = builder.manage(mobile_aircraft::MobileAircraftState::default());
+    let builder = builder.manage(mobile_aircraft::MobileAircraftState::default())
+        .manage(mobile_dump1090::MobileDump1090State::default());
     #[cfg(target_os = "android")]
     let builder = builder.plugin(mobile_storage::init());
     let builder = builder
@@ -184,6 +188,8 @@ pub fn run() {
         credentials::set_source_poll_interval,
         credentials::get_source_rate_limit_status,
         mobile_aircraft::fetch_mobile_aircraft,
+        mobile_dump1090::fetch_mobile_dump1090,
+        mobile_dump1090::stop_mobile_dump1090,
     ]);
     builder.run(tauri::generate_context!())
         .expect("error while running tauri application");
