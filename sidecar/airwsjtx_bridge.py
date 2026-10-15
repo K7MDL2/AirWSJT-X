@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -47,7 +48,6 @@ _adsbexchange_api_key = ""
 _source_poll_intervals = {"opensky": 30.0, "adsbexchange": 30.0}
 _source_rate_limits = {"opensky": SourceRateLimit(), "adsbexchange": SourceRateLimit(opensky=False)}
 _dump1090_feed: Dump1090Feed | None = None
-_dump1090_host: str = "127.0.0.1"
 _dump1090_port: int = 30003
 _supported_sources = ("opensky", "dump1090", "adsbexchange")
 # dump1090 is OFF by default; the user must explicitly enable it via the UI.
@@ -164,8 +164,45 @@ def _write_filters(filters: dict[str, float | None]) -> None:
         pass
 
 
+_DEFAULT_DUMP1090_HOST = "127.0.0.1"
+_DUMP1090_HOST_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,253}$")
+
+
+def _dump1090_host_path() -> str:
+    user_dir = os.path.join(tempfile.gettempdir(), "airwsjtx")
+    os.makedirs(user_dir, exist_ok=True)
+    return os.path.join(user_dir, "dump1090_host.json")
+
+
+def _normalize_dump1090_host(value: object) -> str:
+    """Return a validated dump1090 host; an empty value resets to localhost."""
+    host = str(value or "").strip()
+    if not host:
+        return _DEFAULT_DUMP1090_HOST
+    if not _DUMP1090_HOST_RE.fullmatch(host):
+        raise ValueError("Enter a valid IP address or hostname for dump1090.")
+    return host
+
+
+def _read_dump1090_host() -> str:
+    try:
+        with open(_dump1090_host_path(), "r", encoding="utf-8") as fh:
+            return _normalize_dump1090_host(json.load(fh).get("host"))
+    except Exception:
+        return _DEFAULT_DUMP1090_HOST
+
+
+def _write_dump1090_host(host: str) -> None:
+    try:
+        with open(_dump1090_host_path(), "w", encoding="utf-8") as fh:
+            json.dump({"host": host}, fh)
+    except Exception:
+        pass
+
+
 _aircraft_filters = _read_filters()
 _source_priority: list[str] = _read_source_priority()
+_dump1090_host = _read_dump1090_host()
 
 # Hamlib rotator
 _rotator: HamlibRotator | None = None
@@ -402,9 +439,21 @@ def handle(msg: dict) -> None:
             _start_configured_airscout_feed(force_restart=True)
             _ok(id_, {"locator_a": _station_a_locator, "locator_b": _station_b_locator})
 
-        elif method == "airscout_start_dump1090":
+        elif method == "airscout_get_dump1090_host":
             global _dump1090_host, _dump1090_port
-            host = params.get("host", "127.0.0.1")
+            _ok(id_, {"host": _dump1090_host, "port": _dump1090_port})
+
+        elif method == "airscout_set_dump1090_host":
+            host = _normalize_dump1090_host(params.get("host"))
+            _dump1090_host = host
+            _write_dump1090_host(host)
+            # Reconnect immediately only if the dump1090 feed is running.
+            if _dump1090_feed is not None:
+                _start_dump1090_feed(host, _dump1090_port)
+            _ok(id_, {"host": host, "port": _dump1090_port})
+
+        elif method == "airscout_start_dump1090":
+            host = params.get("host", _dump1090_host)
             port = int(params.get("port", 30003))
             _dump1090_host = host
             _dump1090_port = port

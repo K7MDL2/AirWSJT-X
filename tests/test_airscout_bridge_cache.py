@@ -55,6 +55,24 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                 self.assertEqual(reply.call_args.args[1]["poll_intervals_s"],
                                  {"opensky": 60, "adsbexchange": 10, "dump1090": 5})
 
+    def test_dump1090_host_is_validated_persisted_and_restarts_running_feed(self) -> None:
+        with patch.multiple(airwsjtx_bridge, _dump1090_host="127.0.0.1", _dump1090_feed=object()):
+            with patch.object(airwsjtx_bridge, "_write_dump1090_host") as write, \
+                    patch.object(airwsjtx_bridge, "_start_dump1090_feed") as start, \
+                    patch.object(airwsjtx_bridge, "_ok") as ok, \
+                    patch.object(airwsjtx_bridge, "_err") as err:
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": " 192.168.1.50 "}})
+                write.assert_called_once_with("192.168.1.50")
+                start.assert_called_once_with("192.168.1.50", 30003)
+                self.assertEqual(ok.call_args.args[1], {"host": "192.168.1.50", "port": 30003})
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": "bad host;"}})
+                self.assertTrue(err.called)
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": ""}})
+                self.assertEqual(ok.call_args.args[1]["host"], "127.0.0.1")
+
     def test_tracking_emits_all_current_aircraft_fields_and_original_timestamp(self) -> None:
         ac = Aircraft(
             icao24="abc123", callsign="TEST1", lat=47.5, lon=-122.4,

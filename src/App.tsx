@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
+import Dump1090Source from "./Dump1090Source";
 import { haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
@@ -1358,6 +1359,7 @@ export default function App() {
                 })}
               </div>
               <AircraftAccounts onLog={addLog} />
+              <Dump1090Source rpc={rpc} onLog={addLog} />
               {sourceStatus?.sources?.adsbexchange?.message && (
                 <div style={{ fontSize: 10, color: "var(--yellow)" }}>
                   ADS-B Exchange: {sourceStatus.sources.adsbexchange.message}

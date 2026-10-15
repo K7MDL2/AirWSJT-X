@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Desktop: new **dump1090 source** section below **Aircraft accounts** to set the IP address or hostname of a remote dump1090/readsb receiver (port stays 30003). The address is saved, applied immediately, and defaults to `127.0.0.1`.
+
 ## 0.3.15
 
 ### Fixed
