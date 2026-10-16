@@ -5,8 +5,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:clean": "node scripts/clean-running-desktop.js",
     "wsjtx:test": "python -m unittest tests.test_wsjtx_udp",
-    "build:safe": "npm run wsjtx:test && npm run build",
+    "build:safe": "npm run build:clean && npm run wsjtx:test && npm run build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
