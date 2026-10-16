@@ -6,6 +6,8 @@ import {
   elevationDeg,
   haversineKm,
   slantRangeKm,
+  scatterGeometry,
+  headingDeltaDeg,
 } from "./lib/geo";
 import { Aircraft, OpenSkyPoller, fetchNativeAircraft } from "./lib/opensky";
 import { invoke } from "@tauri-apps/api/core";
@@ -34,7 +36,10 @@ interface MobileAircraft {
   el: number;
   range_km: number;
   distance_km: number;
+  scatter_score: number;
 }
+
+const PATH_TOLERANCE_DEG = 70;
 
 function getScreenOrientationAngle(): number {
   if (typeof window === "undefined") return 0;
@@ -400,6 +405,19 @@ export default function MobileApp() {
       return;
     }
 
+    // Without a valid, distinct DX grid the path filter is skipped.
+    let dxLat = myLat, dxLon = myLon, hasPath = false;
+    const dxGrid = (settings.dxGrid ?? "").trim();
+    if (dxGrid) {
+      try {
+        [dxLat, dxLon] = locatorToLatlon(dxGrid);
+        hasPath = haversineKm(myLat, myLon, dxLat, dxLon) > 0.001;
+      } catch {
+        hasPath = false;
+      }
+    }
+    const pathBearing = hasPath ? bearingDeg(myLat, myLon, dxLat, dxLon) : 0;
+
     const bbox = 3;
     const source = settings.aircraftSource ?? "opensky";
     let disposed = false;
@@ -415,11 +433,15 @@ export default function MobileApp() {
         const withPos = raw.filter(
           (a) => a.lat != null && a.lon != null && a.altitude_m != null && a.altitude_m > 0 && !a.on_ground,
         );
-        const mapped: MobileAircraft[] = withPos.map((a) => {
+        const mapped: MobileAircraft[] = withPos
+          .filter((a) => !hasPath
+            || headingDeltaDeg(bearingDeg(myLat, myLon, a.lat!, a.lon!), pathBearing) <= PATH_TOLERANCE_DEG)
+          .map((a) => {
           const dist = haversineKm(myLat, myLon, a.lat!, a.lon!);
           const az = bearingDeg(myLat, myLon, a.lat!, a.lon!);
           const el = elevationDeg(dist, a.altitude_m!, stationAltRef.current);
           const range = slantRangeKm(dist, a.altitude_m!, stationAltRef.current);
+          const scatter = scatterGeometry(myLat, myLon, dxLat, dxLon, a.lat!, a.lon!, a.altitude_m!, stationAltRef.current);
           return {
             icao24: a.icao24,
             callsign: a.callsign || a.icao24,
@@ -432,9 +454,10 @@ export default function MobileApp() {
             el: Math.round(el * 10) / 10,
             range_km: Math.round(range * 10) / 10,
             distance_km: Math.round(dist * 10) / 10,
+            scatter_score: scatter.scatter_score,
           };
         });
-        mapped.sort((a, b) => a.distance_km - b.distance_km);
+        mapped.sort((a, b) => b.scatter_score - a.scatter_score || a.distance_km - b.distance_km);
         setAircraft(mapped);
         setLastUpdate(Date.now());
         setStatus(`${mapped.length} aircraft in range`);
@@ -454,7 +477,7 @@ export default function MobileApp() {
       }).catch(() => { if (!disposed) setStatus("Cannot read secure aircraft account settings"); });
 
     return () => { disposed = true; poller.stop(); };
-  }, [hasStation, settings.myGrid, settings.aircraftSource, accountRevision]);
+  }, [hasStation, settings.myGrid, settings.dxGrid, settings.aircraftSource, accountRevision]);
 
   // GPS altitude feeds the station height used for elevation/range
   useEffect(() => watchGpsAltitude((alt) => { stationAltRef.current = alt ?? 0; }), []);
@@ -692,7 +715,7 @@ export default function MobileApp() {
                 {ac.callsign}
               </span>
               <span style={{ fontSize: 12, color: "#8b949e" }}>
-                {ac.distance_km.toFixed(0)} km
+                {ac.distance_km.toFixed(0)} km · <span style={{ color: ac.scatter_score >= 0.6 ? "#3fb950" : ac.scatter_score >= 0.3 ? "#d29922" : "#8b949e" }}>Score {Math.round(ac.scatter_score * 100)}%</span>
               </span>
             </div>
             <div style={{ display: "flex", gap: 10, fontSize: 11, color: "#8b949e", fontFamily: "monospace" }}>
