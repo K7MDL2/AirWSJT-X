@@ -6,5 +6,7 @@
 	<false/>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>AirWSJT-X uses your altitude to compute accurate aircraft elevation angles.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>AirWSJT-X connects to a dump1090 ADS-B receiver on your local network to show nearby aircraft.</string>
 </dict>
 </plist>

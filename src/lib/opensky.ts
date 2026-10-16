@@ -82,6 +82,13 @@ export async function fetchNativeAircraft(
   });
 }
 
+export async function fetchDump1090Aircraft(host: string): Promise<Aircraft[]> {
+  const data = await invoke<{ aircraft?: Omit<Aircraft, "last_seen">[] }>("fetch_mobile_dump1090", { host });
+  if (!Array.isArray(data.aircraft)) throw new Error("Invalid dump1090 aircraft data");
+  const now = Date.now();
+  return data.aircraft.map(ac => ({ ...ac, last_seen: now }));
+}
+
 export interface OpenSkyPollerOptions {
   latMin: number;
   lonMin: number;

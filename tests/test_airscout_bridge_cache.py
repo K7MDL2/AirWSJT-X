@@ -55,6 +55,88 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                 self.assertEqual(reply.call_args.args[1]["poll_intervals_s"],
                                  {"opensky": 60, "adsbexchange": 10, "dump1090": 5})
 
+    def test_dump1090_host_is_validated_persisted_and_restarts_running_feed(self) -> None:
+        with patch.multiple(airwsjtx_bridge, _dump1090_host="127.0.0.1", _dump1090_feed=object()):
+            with patch.object(airwsjtx_bridge, "_write_dump1090_host") as write, \
+                    patch.object(airwsjtx_bridge, "_start_dump1090_feed") as start, \
+                    patch.object(airwsjtx_bridge, "_ok") as ok, \
+                    patch.object(airwsjtx_bridge, "_err") as err:
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": " 192.168.1.50 "}})
+                write.assert_called_once_with("192.168.1.50")
+                start.assert_called_once_with("192.168.1.50", 30003)
+                self.assertEqual(ok.call_args.args[1], {"host": "192.168.1.50", "port": 30003})
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": "bad host;"}})
+                self.assertTrue(err.called)
+                airwsjtx_bridge.handle({"id": "h", "method": "airscout_set_dump1090_host",
+                                        "params": {"host": ""}})
+                self.assertEqual(ok.call_args.args[1]["host"], "127.0.0.1")
+
+    def test_dump1090_report_emits_activity_summary(self) -> None:
+        ac = Aircraft(
+            icao24="abc123", callsign="TEST1", lat=47.5, lon=-122.4,
+            altitude_m=9000, velocity_ms=200, heading_deg=90,
+            vertical_rate_ms=0, on_ground=False,
+        )
+        nopos = Aircraft(
+            icao24="def456", callsign=None, lat=None, lon=None,
+            altitude_m=None, velocity_ms=None, heading_deg=None,
+            vertical_rate_ms=None, on_ground=False,
+        )
+        captured: dict = {}
+
+        class FakeFeed:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+                self.messages_received = 7
+                self.last_message_epoch_s = time.time() - 2
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        with patch.object(airwsjtx_bridge, "Dump1090Feed", FakeFeed), \
+                patch.object(airwsjtx_bridge, "_emit") as emit, \
+                patch.object(airwsjtx_bridge, "_emit_aircraft_update"), \
+                patch.object(airwsjtx_bridge, "_replace_aircraft_cache"), \
+                patch.object(airwsjtx_bridge, "_set_source_status"), \
+                patch.object(airwsjtx_bridge, "_active_source", None):
+            airwsjtx_bridge._start_dump1090_feed("192.168.2.58", 30003)
+            captured["on_update"]([ac, nopos])
+        event = next(c.args[0] for c in emit.call_args_list if c.args[0].get("event") == "dump1090_activity")
+        self.assertEqual(event["data"]["host"], "192.168.2.58")
+        self.assertEqual(event["data"]["messages"], 7)
+        self.assertEqual(event["data"]["aircraft"], 2)
+        self.assertEqual(event["data"]["with_position"], 1)
+        self.assertGreaterEqual(event["data"]["last_message_age_s"], 2)
+
+    def test_dump1090_busy_sets_busy_state_and_emits_event(self) -> None:
+        captured: dict = {}
+
+        class FakeFeed:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        with patch.object(airwsjtx_bridge, "Dump1090Feed", FakeFeed), \
+                patch.object(airwsjtx_bridge, "_emit") as emit, \
+                patch.object(airwsjtx_bridge, "_set_source_status") as status, \
+                patch.object(airwsjtx_bridge, "_active_source", None):
+            airwsjtx_bridge._start_dump1090_feed("192.168.2.58", 30003)
+            captured["on_busy"]("RTL-SDR in use by rtl_tcp")
+        status.assert_called_with("dump1090", "busy", "RTL-SDR in use by rtl_tcp")
+        event = next(c.args[0] for c in emit.call_args_list if c.args[0].get("event") == "dump1090_busy")
+        self.assertEqual(event["data"], {"host": "192.168.2.58", "port": 30003,
+                                         "message": "RTL-SDR in use by rtl_tcp"})
+
     def test_tracking_emits_all_current_aircraft_fields_and_original_timestamp(self) -> None:
         ac = Aircraft(
             icao24="abc123", callsign="TEST1", lat=47.5, lon=-122.4,

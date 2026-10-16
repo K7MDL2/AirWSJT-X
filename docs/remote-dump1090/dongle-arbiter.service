@@ -1,0 +1,16 @@
+[Unit]
+Description=RTL-SDR dongle arbiter (first-come-wins dump1090 / rtl_tcp)
+After=network.target
+# Keep retrying if a port is briefly busy (for example the old dump1090 service still stopping).
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/python3 /opt/dongle-arbiter/dongle_arbiter.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

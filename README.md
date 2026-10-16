@@ -56,7 +56,7 @@ When multiple WSJT-X instances are on the network, the **Rig** dropdown selects 
 
 ### Mobile Mode
 
-The mobile app operates independently — enter your grid locator, select an aircraft data source (OpenSky or ADS-B Exchange), and aircraft in your area appear on the compass rose with azimuth, elevation, and distance. Speech callouts guide antenna pointing hands-free.
+The mobile app operates independently — enter your grid locator, select an aircraft data source (OpenSky, ADS-B Exchange, or a dump1090 receiver on your network), and aircraft in your area appear on the compass rose with azimuth, elevation, and distance. Speech callouts guide antenna pointing hands-free.
 
 ### Remote Station Database
 
@@ -77,9 +77,13 @@ Expand **Aircraft accounts** in the desktop aircraft panel (or mobile **Settings
 
 - **OpenSky Network** — Create an account at [opensky-network.org](https://opensky-network.org/), create an API client, and paste the `clientId` and `clientSecret` values. The app handles OAuth2 token management automatically.
 - **ADS-B Exchange** — Obtain an API key from [ADS-B Exchange](https://gateway.adsbexchange.com/api/aircraft/v2/docs/index.html) for the direct v2 geographic radius endpoint. Note: RapidAPI keys use a different gateway and are not interchangeable.
-- **dump1090 / readsb** — Desktop only. Connects via SBS TCP (port 30003) to a local receiver.
+- **dump1090 / readsb** — Connects via SBS TCP (port 30003). On desktop it defaults to a receiver on this computer (`127.0.0.1`); to use a receiver elsewhere on your network (for example a Raspberry Pi), expand **dump1090 source** below **Aircraft accounts**, enter its IP address or hostname, and click **Save dump1090 source**. The port stays 30003. The address is applied immediately and remembered across restarts. On mobile there may not be a local receiver, so the same **dump1090 source** section (in **Settings**) only takes a network address: saving it selects **dump1090 (network)** as the aircraft source, and **Disable dump1090** clears it and returns to OpenSky. The phone must be on the same network as the receiver (iOS asks for Local Network permission on first use).  If you have a tablet for example, with dump1090 and a USB RTL-SDR running, then 127.0.0.1 is valid entry.
 
 Credentials are stored in the OS credential manager (Keychain, Credential Manager, Secret Service, or Android Keystore). Poll intervals default to 30 seconds and are independently configurable per provider.
+
+> **Remote dump1090 not connecting?** The Debian/Raspberry Pi package of `dump1090-mutability` listens on localhost only by default. On the receiver, edit `/etc/default/dump1090-mutability`, set `NET_BIND_ADDRESS="0.0.0.0"` (and keep `NET_SBS_PORT=30003`), then run `sudo systemctl restart dump1090-mutability`. Verify with `ss -ltnp | grep 30003` on the receiver, and check that no firewall blocks port 30003.
+
+> **One RTL-SDR shared between dump1090 and `rtl_tcp` on the receiver?** [docs/remote-dump1090](docs/remote-dump1090/README.md) has a small first-come-wins service that starts dump1090 when AirWSJT-X connects and releases the dongle again when it disconnects, so nothing has to be switched by hand.
 
 ## Building from Source
 
