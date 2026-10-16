@@ -83,6 +83,8 @@ Credentials are stored in the OS credential manager (Keychain, Credential Manage
 
 > **Remote dump1090 not connecting?** The Debian/Raspberry Pi package of `dump1090-mutability` listens on localhost only by default. On the receiver, edit `/etc/default/dump1090-mutability`, set `NET_BIND_ADDRESS="0.0.0.0"` (and keep `NET_SBS_PORT=30003`), then run `sudo systemctl restart dump1090-mutability`. Verify with `ss -ltnp | grep 30003` on the receiver, and check that no firewall blocks port 30003.
 
+> **One RTL-SDR shared between dump1090 and `rtl_tcp` on the receiver?** [docs/remote-dump1090](docs/remote-dump1090/README.md) has a small first-come-wins service that starts dump1090 when AirWSJT-X connects and releases the dongle again when it disconnects, so nothing has to be switched by hand.
+
 ## Building from Source
 
 ### Prerequisites
