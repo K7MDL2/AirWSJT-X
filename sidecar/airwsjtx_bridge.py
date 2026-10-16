@@ -1205,6 +1205,10 @@ def _start_dump1090_feed(host: str, port: int) -> None:
         _emit({"event": "airscout_error", "data": {"source": "dump1090", "message": msg}})
         _try_fallback("dump1090", msg)
 
+    def _on_busy(msg: str) -> None:
+        _set_source_status("dump1090", "busy", msg)
+        _emit({"event": "dump1090_busy", "data": {"host": host, "port": port, "message": msg}})
+
     with _source_status_lock:
         _active_source = "dump1090"
     _set_source_status("dump1090", "connecting")
@@ -1215,6 +1219,7 @@ def _start_dump1090_feed(host: str, port: int) -> None:
         on_connected=_on_connected,
         on_disconnected=_on_disconnected,
         on_error=_on_error,
+        on_busy=_on_busy,
     )
     _dump1090_feed.start()
 

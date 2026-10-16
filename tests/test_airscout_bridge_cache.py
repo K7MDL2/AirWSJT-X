@@ -113,6 +113,30 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
         self.assertEqual(event["data"]["with_position"], 1)
         self.assertGreaterEqual(event["data"]["last_message_age_s"], 2)
 
+    def test_dump1090_busy_sets_busy_state_and_emits_event(self) -> None:
+        captured: dict = {}
+
+        class FakeFeed:
+            def __init__(self, **kwargs) -> None:
+                captured.update(kwargs)
+
+            def start(self) -> None:
+                pass
+
+            def stop(self) -> None:
+                pass
+
+        with patch.object(airwsjtx_bridge, "Dump1090Feed", FakeFeed), \
+                patch.object(airwsjtx_bridge, "_emit") as emit, \
+                patch.object(airwsjtx_bridge, "_set_source_status") as status, \
+                patch.object(airwsjtx_bridge, "_active_source", None):
+            airwsjtx_bridge._start_dump1090_feed("192.168.2.58", 30003)
+            captured["on_busy"]("RTL-SDR in use by rtl_tcp")
+        status.assert_called_with("dump1090", "busy", "RTL-SDR in use by rtl_tcp")
+        event = next(c.args[0] for c in emit.call_args_list if c.args[0].get("event") == "dump1090_busy")
+        self.assertEqual(event["data"], {"host": "192.168.2.58", "port": 30003,
+                                         "message": "RTL-SDR in use by rtl_tcp"})
+
     def test_tracking_emits_all_current_aircraft_fields_and_original_timestamp(self) -> None:
         ac = Aircraft(
             icao24="abc123", callsign="TEST1", lat=47.5, lon=-122.4,

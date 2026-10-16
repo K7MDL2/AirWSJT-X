@@ -213,6 +213,7 @@ export default function App() {
   const [sourceStatus, setSourceStatus] = useState<AirscoutSourceState | null>(null);
   const [dump1090Activity, setDump1090Activity] = useState<Dump1090Activity | null>(null);
   const dump1090LogRef = useRef<{ signature: string; at: number } | null>(null);
+  const dump1090BusyLogRef = useRef<{ signature: string; at: number } | null>(null);
   const [rotatorConnected, setRotatorConnected] = useState(false);
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
@@ -384,7 +385,16 @@ export default function App() {
             addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
           } else if (evt === "airscout_update") {
             setAirscout(evtData as unknown as AirscoutUpdate);
+          } else if (evt === "dump1090_busy") {
+            const signature = `${evtData.host}:${evtData.message}`;
+            const last = dump1090BusyLogRef.current;
+            // The host is retried every few seconds; log a change, then a reminder each minute.
+            if (!last || last.signature !== signature || Date.now() - last.at >= 60000) {
+              dump1090BusyLogRef.current = { signature, at: Date.now() };
+              addLog(`dump1090 ${evtData.host}:${evtData.port} busy: ${evtData.message} (retrying)`);
+            }
           } else if (evt === "dump1090_activity") {
+            dump1090BusyLogRef.current = null;
             const activity = evtData as unknown as Dump1090Activity;
             setDump1090Activity(activity);
             const signature = `${activity.host}:${activity.aircraft}:${activity.with_position}`;
@@ -647,25 +657,30 @@ export default function App() {
   const activeSourceMessage = activeSource ? sourceStatus?.sources?.[activeSource]?.message ?? null : null;
   const internetSourceState = activeSource === "adsbexchange"
     ? activeSourceState : sourceStatus?.sources?.opensky?.state ?? "stopped";
+  const dump1090Busy = activeSource === "dump1090" && activeSourceState === "busy";
   const connectivityState = activeSource === "dump1090" && activeSourceState === "connected"
     ? "local"
-    : internetSourceState === "connected"
-      ? "online"
-      : ["backoff", "connecting", "disconnected"].includes(internetSourceState)
-        ? "degraded"
-        : "offline";
+    : dump1090Busy
+      ? "busy"
+      : internetSourceState === "connected"
+        ? "online"
+        : ["backoff", "connecting", "disconnected"].includes(internetSourceState)
+          ? "degraded"
+          : "offline";
   const connectivityColor = connectivityState === "online" || connectivityState === "local"
     ? "var(--green)"
-    : connectivityState === "degraded"
+    : connectivityState === "degraded" || connectivityState === "busy"
       ? "var(--yellow)"
       : "var(--red)";
   const connectivityLabel = connectivityState === "local"
     ? "LOCAL ADS-B"
-    : connectivityState === "online"
-      ? "NET ONLINE"
-      : connectivityState === "degraded"
-        ? "NET DEGRADED"
-        : "NET OFFLINE";
+    : connectivityState === "busy"
+      ? "DUMP1090 BUSY"
+      : connectivityState === "online"
+        ? "NET ONLINE"
+        : connectivityState === "degraded"
+          ? "NET DEGRADED"
+          : "NET OFFLINE";
   const cacheAgeSeconds = airscout?.last_update_epoch_s
     ? Math.max(0, nowEpochS - airscout.last_update_epoch_s)
     : airscout?.cache_age_s ?? null;
@@ -673,7 +688,7 @@ export default function App() {
   const freshnessLabel = ["fresh", "stale", "expired"].includes(dataFreshness) ? dataFreshness : "waiting";
   const sourceDotColor = activeSourceState === "connected"
     ? "var(--green)"
-    : activeSourceState === "backoff" || activeSourceState === "connecting"
+    : activeSourceState === "backoff" || activeSourceState === "connecting" || activeSourceState === "busy"
       ? "var(--yellow)"
       : "var(--red)";
   const availableSources = sourceStatus ? Object.keys(sourceStatus.sources) : ["opensky", "adsbexchange"];

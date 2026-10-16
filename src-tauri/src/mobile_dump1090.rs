@@ -9,6 +9,7 @@ const SBS_PORT: u16 = 30003;
 const STALE_AFTER: Duration = Duration::from_secs(60);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const IDLE_RECONNECT: Duration = Duration::from_secs(120);
+const FIRST_DATA_WAIT: Duration = Duration::from_secs(1);
 const RETRY_DELAY: Duration = Duration::from_secs(5);
 
 #[derive(Clone)]
@@ -105,26 +106,63 @@ fn set_status(shared: &Shared, status: Status) {
     if let Ok(mut guard) = shared.status.lock() { *guard = status; }
 }
 
+/// A shared-receiver host that is serving another program sends `BUSY,<reason>`
+/// and then closes the connection.
+fn busy_reason(line: &str) -> Option<String> {
+    let reason = line.trim().trim_matches('\0').strip_prefix("BUSY,")?.trim();
+    Some(if reason.is_empty() { "receiver busy".into() } else { reason.into() })
+}
+
 async fn run(host: String, shared: Arc<Shared>) {
     loop {
         match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), SBS_PORT))).await {
             Ok(Ok(stream)) => {
-                set_status(&shared, Status::Connected);
                 let mut reader = BufReader::new(stream);
                 let mut buffer = Vec::new();
-                loop {
-                    buffer.clear();
-                    match tokio::time::timeout(IDLE_RECONNECT, reader.read_until(b'\n', &mut buffer)).await {
-                        Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
-                        Ok(Ok(_)) => {
-                            let line = String::from_utf8_lossy(&buffer);
-                            if let Ok(mut aircraft) = shared.aircraft.lock() {
-                                apply_sbs_line(&mut aircraft, &line, Instant::now());
+                let mut end = Status::Failed(format!("Connection to dump1090 at {host}:{SBS_PORT} was lost"));
+                // A host that refuses us closes right away or says why first, so only
+                // report "connected" once it has not. An idle receiver stays quiet.
+                let first = tokio::time::timeout(FIRST_DATA_WAIT, reader.read_until(b'\n', &mut buffer)).await;
+                let refused = match first {
+                    Ok(Ok(0)) | Ok(Err(_)) => {
+                        end = Status::Failed(format!("dump1090 at {host}:{SBS_PORT} closed the connection"));
+                        true
+                    }
+                    Ok(Ok(_)) => {
+                        let text = String::from_utf8_lossy(&buffer).into_owned();
+                        buffer.clear();
+                        match busy_reason(&text) {
+                            Some(reason) => {
+                                end = Status::Failed(format!("dump1090 busy: {reason}"));
+                                true
+                            }
+                            None => {
+                                if let Ok(mut aircraft) = shared.aircraft.lock() {
+                                    apply_sbs_line(&mut aircraft, &text, Instant::now());
+                                }
+                                false
+                            }
+                        }
+                    }
+                    Err(_) => false,
+                };
+                if !refused {
+                    set_status(&shared, Status::Connected);
+                    // Keep any bytes already read; a timed-out read can be resumed.
+                    loop {
+                        match tokio::time::timeout(IDLE_RECONNECT, reader.read_until(b'\n', &mut buffer)).await {
+                            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => break,
+                            Ok(Ok(_)) => {
+                                let line = String::from_utf8_lossy(&buffer);
+                                if let Ok(mut aircraft) = shared.aircraft.lock() {
+                                    apply_sbs_line(&mut aircraft, &line, Instant::now());
+                                }
+                                buffer.clear();
                             }
                         }
                     }
                 }
-                set_status(&shared, Status::Failed(format!("Connection to dump1090 at {host}:{SBS_PORT} was lost")));
+                set_status(&shared, end);
             }
             Ok(Err(error)) => set_status(&shared, Status::Failed(
                 format!("Cannot connect to dump1090 at {host}:{SBS_PORT}: {error}"))),
@@ -193,6 +231,9 @@ pub async fn stop_mobile_dump1090(state: tauri::State<'_, MobileDump1090State>) 
 mod tests {
     use super::*;
 
+    // The tests that need the fixed SBS port take turns.
+    static PORT_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     #[test]
     fn position_and_velocity_messages_merge_into_one_track() {
         let mut aircraft = HashMap::new();
@@ -234,9 +275,10 @@ mod tests {
     #[tokio::test]
     async fn loopback_receiver_on_the_same_device_is_reachable() {
         use tokio::io::AsyncWriteExt;
+        let _guard = PORT_LOCK.lock().await;
         // The port is fixed at 30003; skip if a real receiver already holds it.
         let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", SBS_PORT)).await else { return };
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             if let Ok((mut socket, _)) = listener.accept().await {
                 let _ = socket.write_all(b"MSG,3,1,1,ABC123,1,d,t,d,t,,5000,,,47.5,-122.25,,,0,0,0,0\n").await;
                 tokio::time::sleep(Duration::from_secs(5)).await;
@@ -254,8 +296,68 @@ mod tests {
             if count > 0 { break; }
         }
         task.abort();
+        server.abort();
         assert!(matches!(shared.status.lock().unwrap().clone(), Status::Connected));
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn busy_line_is_recognised_and_ordinary_lines_are_not() {
+        assert_eq!(busy_reason("BUSY,RTL-SDR in use by rtl_tcp; free about 30s\r\n").as_deref(),
+                   Some("RTL-SDR in use by rtl_tcp; free about 30s"));
+        assert_eq!(busy_reason("BUSY,\r\n").as_deref(), Some("receiver busy"));
+        assert!(busy_reason("MSG,3,1,1,ABC123,1").is_none());
+        assert!(busy_reason("").is_none());
+    }
+
+    /// Serves `script` to the first client on 127.0.0.1:30003 and returns the status
+    /// the client settles on, or None when a real receiver already holds the port.
+    async fn status_against(script: &'static [u8]) -> Option<(Status, usize)> {
+        use tokio::io::AsyncWriteExt;
+        let _guard = PORT_LOCK.lock().await;
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", SBS_PORT)).await.ok()?;
+        let server = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let _ = socket.write_all(script).await;
+                let _ = socket.shutdown().await;
+            }
+        });
+        let shared = Arc::new(Shared {
+            aircraft: StdMutex::new(HashMap::new()),
+            status: StdMutex::new(Status::Connecting),
+        });
+        let task = tokio::spawn(run("127.0.0.1".into(), shared.clone()));
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        task.abort();
+        server.abort();
+        let status = shared.status.lock().unwrap().clone();
+        let count = shared.aircraft.lock().unwrap().len();
+        Some((status, count))
+    }
+
+    #[tokio::test]
+    async fn busy_host_is_reported_as_busy_not_connected() {
+        let Some((status, count)) = status_against(b"BUSY,RTL-SDR in use by rtl_tcp\r\n").await else { return };
+        match status {
+            Status::Failed(message) => assert_eq!(message, "dump1090 busy: RTL-SDR in use by rtl_tcp"),
+            _ => panic!("expected a busy failure"),
+        }
+        assert_eq!(count, 0);
+    }
+
+    #[tokio::test]
+    async fn host_that_closes_immediately_is_not_reported_as_connected() {
+        let Some((status, _)) = status_against(b"").await else { return };
+        assert!(matches!(status, Status::Failed(message) if message.contains("closed the connection")));
+    }
+
+    #[tokio::test]
+    async fn first_data_line_is_not_lost_when_connecting() {
+        let line = b"MSG,3,1,1,ABC123,1,d,t,d,t,,5000,,,47.5,-122.25,,,0,0,0,0\r\nMSG,3,1,1,DEF456,1,d,t,d,t,,6000,,,47.6,-122.35,,,0,0,0,0\r\n";
+        let Some((status, count)) = status_against(line).await else { return };
+        assert_eq!(count, 2);
+        // The server then closed, so the client has moved on from "connected".
+        assert!(matches!(status, Status::Failed(_)));
     }
 
     #[test]
