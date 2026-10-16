@@ -472,6 +472,8 @@ class Dump1090Feed:
         self._thread: threading.Thread | None = None
         self._aircraft: dict[str, Aircraft] = {}
         self._lock = threading.Lock()
+        self.messages_received = 0
+        self.last_message_epoch_s: float | None = None
 
     def start(self) -> None:
         self._stop.clear()
@@ -520,6 +522,8 @@ class Dump1090Feed:
         callsign_raw = parts[10] if len(parts) > 10 else ""
 
         with self._lock:
+            self.messages_received += 1
+            self.last_message_epoch_s = time.time()
             ac = self._aircraft.setdefault(
                 icao24,
                 Aircraft(

@@ -27,6 +27,19 @@ class Dump1090FeedParsingTests(unittest.TestCase):
     def test_default_report_interval_is_five_seconds(self) -> None:
         self.assertEqual(Dump1090Feed().report_interval_s, 5.0)
 
+    def test_message_counter_counts_valid_lines_only(self) -> None:
+        feed = Dump1090Feed()
+        self.assertEqual(feed.messages_received, 0)
+        self.assertIsNone(feed.last_message_epoch_s)
+        for line in ("", "garbage", "MSG,3", "STA,6,1,1,ABC123,1"):
+            feed._parse_sbs(line)
+        self.assertEqual(feed.messages_received, 0)
+        with patch("airwsjtx.airscout.time.time", return_value=1000):
+            feed._parse_sbs("MSG,3,1,1,ABC123,0,0,0,0,0,TEST,35000,0,0,47,-122,0,0,0,0,0,0")
+            feed._parse_sbs("MSG,4,1,1,ABC123,0,0,0,0,0,TEST,0,420,180,0,0,0,0,0,0,0,0")
+        self.assertEqual(feed.messages_received, 2)
+        self.assertEqual(feed.last_message_epoch_s, 1000)
+
     def test_position_timestamp_does_not_advance_for_velocity_reports(self) -> None:
         feed = Dump1090Feed()
         with patch("airwsjtx.airscout.time.time", return_value=1000):

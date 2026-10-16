@@ -465,7 +465,11 @@ export default function MobileApp() {
         mapped.sort((a, b) => a.distance_km - b.distance_km);
         setAircraft(mapped);
         setLastUpdate(Date.now());
-        setStatus(`${mapped.length} aircraft in range`);
+        setStatus(source === "dump1090"
+          ? raw.length === 0
+            ? "dump1090 connected — no aircraft received"
+            : `dump1090: ${raw.length} received, ${mapped.length} with position`
+          : `${mapped.length} aircraft in range`);
       },
       onError: (msg) => setStatus(`Error: ${msg}`),
       onRateLimited: (ms) => setStatus(`Rate limited — retry in ${Math.round(ms / 1000)}s`),

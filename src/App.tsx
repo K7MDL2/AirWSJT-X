@@ -76,6 +76,14 @@ interface AirscoutSourceState {
   sources: Record<string, { state: string; message: string | null }>;
   poll_intervals_s?: Record<string, number>;
 }
+interface Dump1090Activity {
+  host: string;
+  port: number;
+  messages: number;
+  aircraft: number;
+  with_position: number;
+  last_message_age_s: number | null;
+}
 interface CallsignDbStatus {
   db_url: string;
   version: string | null;
@@ -203,6 +211,8 @@ export default function App() {
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
   const [sourceStatus, setSourceStatus] = useState<AirscoutSourceState | null>(null);
+  const [dump1090Activity, setDump1090Activity] = useState<Dump1090Activity | null>(null);
+  const dump1090LogRef = useRef<{ signature: string; at: number } | null>(null);
   const [rotatorConnected, setRotatorConnected] = useState(false);
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
@@ -374,6 +384,19 @@ export default function App() {
             addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
           } else if (evt === "airscout_update") {
             setAirscout(evtData as unknown as AirscoutUpdate);
+          } else if (evt === "dump1090_activity") {
+            const activity = evtData as unknown as Dump1090Activity;
+            setDump1090Activity(activity);
+            const signature = `${activity.host}:${activity.aircraft}:${activity.with_position}`;
+            const last = dump1090LogRef.current;
+            const idle = activity.aircraft === 0;
+            // Log on change, plus a periodic reminder while idle so silence isn't mistaken for a hang.
+            if (!last || last.signature !== signature || (idle && Date.now() - last.at >= 60000)) {
+              dump1090LogRef.current = { signature, at: Date.now() };
+              addLog(idle
+                ? `dump1090 ${activity.host}:${activity.port}: connected, no aircraft received (${activity.messages} messages total)`
+                : `dump1090 ${activity.host}:${activity.port}: ${activity.aircraft} aircraft, ${activity.with_position} with position (${activity.messages} messages)`);
+            }
           } else if (evt === "airscout_source_status") {
             setSourceStatus(evtData as unknown as AirscoutSourceState);
           } else if (evt === "airscout_source_switched") {
@@ -1270,6 +1293,15 @@ export default function App() {
                   <span style={{ marginLeft: 6, color: "var(--text)" }}>
                     {filteredAircraftCount}/{totalAircraftCount} shown
                   </span>
+                )}
+                {activeSource === "dump1090" && dump1090Activity && (
+                  <div style={{ color: "var(--text-muted)" }}>
+                    dump1090 {dump1090Activity.host}:{dump1090Activity.port} · {dump1090Activity.messages} messages
+                    {" · "}{dump1090Activity.aircraft} aircraft ({dump1090Activity.with_position} with position)
+                    {dump1090Activity.last_message_age_s != null
+                      ? ` · last message ${Math.round(dump1090Activity.last_message_age_s)}s ago`
+                      : " · no messages yet — idle until an aircraft is in range"}
+                  </div>
                 )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(100px, 1fr))", gap: 4 }}>

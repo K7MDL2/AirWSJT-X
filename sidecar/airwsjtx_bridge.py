@@ -1177,6 +1177,15 @@ def _start_dump1090_feed(host: str, port: int) -> None:
     def _on_update(aircraft: list[Aircraft]) -> None:
         _set_source_status("dump1090", "connected")
         _replace_aircraft_cache(aircraft)
+        feed = _dump1090_feed
+        last_message = feed.last_message_epoch_s if feed else None
+        _emit({"event": "dump1090_activity", "data": {
+            "host": host, "port": port,
+            "messages": feed.messages_received if feed else 0,
+            "aircraft": len(aircraft),
+            "with_position": sum(1 for ac in aircraft if ac.has_position),
+            "last_message_age_s": round(time.time() - last_message, 1) if last_message else None,
+        }})
         _emit_aircraft_update()
 
     def _on_connected() -> None:
