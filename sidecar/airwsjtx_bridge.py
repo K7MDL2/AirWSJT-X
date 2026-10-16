@@ -27,7 +27,7 @@ from airwsjtx.callsign import (
     lookup as lookup_callsign,
     submit_grid_contribution as callsign_submit_grid_contribution,
 )
-from airwsjtx.geo import bearing_deg, haversine_km, heading_within_tolerance, locator_to_latlon, scatter_geometry
+from airwsjtx.geo import bearing_deg, haversine_km, heading_delta_deg, heading_within_tolerance, locator_to_latlon, scatter_geometry
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
@@ -95,6 +95,7 @@ _DEFAULT_FILTERS = {
     "lon_max": None,
     "altitude_min_ft": None,
     "heading_tolerance_deg": 30.0,
+    "position_tolerance_deg": 70.0,
 }
 
 
@@ -1241,6 +1242,14 @@ def _aircraft_matches_filters(ac: Aircraft, lat_a: float, lon_a: float, lat_b: f
     if filters.get("altitude_min_ft") is not None:
         altitude_ft = ac.altitude_m * 3.28084
         if altitude_ft < float(filters["altitude_min_ft"]):
+            return False
+
+    path_unset = abs(lat_a - lat_b) < 1e-9 and abs(lon_a - lon_b) < 1e-9
+    if not path_unset:
+        position_tol = filters.get("position_tolerance_deg")
+        position_tol = 70.0 if position_tol is None else float(position_tol)
+        az_to_plane = bearing_deg(lat_a, lon_a, ac.lat, ac.lon)
+        if heading_delta_deg(az_to_plane, bearing_deg(lat_a, lon_a, lat_b, lon_b)) > abs(position_tol):
             return False
 
     if ac.heading_deg is not None and ac.velocity_ms not in (None, 0):
