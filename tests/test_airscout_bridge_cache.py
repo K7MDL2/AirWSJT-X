@@ -31,6 +31,19 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                 airwsjtx_bridge._update_rotator_for_locked([ac])
                 self.assertEqual(emit.call_args.args[0]["data"]["range_a_km"], 10.0)
 
+    def test_aircraft_must_be_within_position_tolerance_of_path_bearing(self) -> None:
+        def plane(lon: float) -> Aircraft:
+            return Aircraft(
+                icao24="abc123", callsign="T", lat=40.0, lon=lon,
+                altitude_m=10000, velocity_ms=200, heading_deg=90,
+                vertical_rate_ms=0, on_ground=False,
+            )
+
+        # DX due east of MY: eastern plane kept, western plane rejected.
+        with patch.dict(airwsjtx_bridge._aircraft_filters, {"position_tolerance_deg": 70.0}):
+            self.assertTrue(airwsjtx_bridge._aircraft_matches_filters(plane(-99.0), 40.0, -100.0, 40.0, -80.0))
+            self.assertFalse(airwsjtx_bridge._aircraft_matches_filters(plane(-101.0), 40.0, -100.0, 40.0, -80.0))
+
     def test_poll_rate_change_emits_updated_source_status(self) -> None:
         with patch.dict(airwsjtx_bridge._source_poll_intervals):
             with patch.multiple(airwsjtx_bridge, _active_source="opensky", _opensky_feed=None):
