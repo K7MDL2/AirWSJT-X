@@ -1,13 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.3.17
 
 ### Added
-- Desktop: new **dump1090 source** section below **Aircraft accounts** to set the IP address or hostname of a remote dump1090/readsb receiver (port stays 30003). The address is saved, applied immediately, and defaults to `127.0.0.1`.
-- dump1090 activity is now visible: the desktop log and Scatter Aircraft panel show messages received, aircraft count, aircraft with position and time since the last message (or "no aircraft received" while the receiver is idle), and the mobile status badge does the same.
-- Mobile: new **dump1090 source** section in Settings, below **Aircraft accounts**, to read aircraft from a dump1090/readsb receiver on the local network (port 30003). Saving an address selects the new "dump1090 (network)" aircraft source; **Disable dump1090** clears it and returns to OpenSky. iOS builds declare a local-network usage description for this.
-- Receiver host tooling (`docs/remote-dump1090`): a small systemd service that lets one RTL-SDR be shared between dump1090 and `rtl_tcp` on a remote host. The first client to connect starts the matching service, the other is refused while it is held, and the dongle is released after the last client disconnects.
-- dump1090 "busy" state: when the shared receiver is in use by another program, AirWSJT-X (desktop and mobile) shows a yellow "dump1090 busy" status with the reason, logs it, and keeps retrying, instead of reporting "connected" with no data. A connection that the host closes straight away is no longer reported as connected either.
+- **dump1090 network source** (desktop & mobile): connect to a remote dump1090/readsb receiver by IP or hostname on port 30003. Desktop has a new section below Aircraft accounts; mobile has a matching section in Settings. Saving an address auto-selects the "dump1090 (network)" source. iOS builds include a local-network usage description.
+- dump1090 activity indicators: messages received, aircraft count, aircraft with position, and time since last message — shown in the desktop log, Scatter Aircraft panel, and mobile status badge.
+- dump1090 "busy" state: when the receiver is in use by another program, a yellow status with the reason is shown and retries continue automatically, instead of falsely reporting "connected."
+- Receiver host tooling (`docs/remote-dump1090`): systemd services to share one RTL-SDR between dump1090 and `rtl_tcp` on a remote host.
+- **Path bearing filter**: aircraft are now filtered to within ±70° of the MY-to-DX station path. Only aircraft near the scatter corridor are shown, preventing the app from pointing at planes behind you.
+- **Scatter score display**: each aircraft in the mobile list shows a color-coded scatter score (green ≥60%, yellow ≥30%, grey below). Aircraft are sorted by scatter score first, then distance.
+- VS Code build tasks for Windows desktop development (build, run, build-and-run, dev).
+- Auto-generated Windows sidecar wrapper in `build.rs` so desktop builds work without PyInstaller on local setups.
+- Pre-build desktop process cleanup script to avoid Windows "access denied" file locks when rebuilding.
+
+### Fixed
+- Rotator: rewrote TCP reader with line-buffered parsing and consecutive-failure tolerance — handles bare float responses from Pyrodrifter ESP32 firmware alongside standard Hamlib tagged output.
+- WSJT-X UDP: companion logging apps (ACLog, JTAlert, GridTracker, Log4OM, N1MM) are now filtered out so only real WSJT-X/JTDX instances drive the state machine.
+- Rotator host and port are now saved to localStorage and restored on mount.
+
+### Dependencies
+- Bumped Tauri plugins, serde_json, vite/typescript tooling, and actions/upload-artifact.
 
 ## 0.3.15
 
