@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useRef, useState } from "react";
+import DarkSelect from "./DarkSelect";
 import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
@@ -894,31 +895,22 @@ export default function App() {
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 8 }}>
           <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text-muted)" }}>
             Rig
-            <select
+            <DarkSelect
+              ariaLabel="Rig"
               value={wsjtxRigFilter}
               disabled={wsjtxRigFilterBusy}
-              style={{
-                width: 180,
-                fontSize: 10,
-                padding: "2px 6px",
-                borderRadius: 4,
-                border: "1px solid var(--border)",
-                background: "#000",
-                color: "#e6edf3",
-                colorScheme: "dark",
-              }}
-              onChange={(e) => { void applyWsjtxRigFilter(e.target.value); }}
-            >
-              <option value="">Any rig</option>
-              {wsjtxRigFilter && !wsjtxKnownRigs.some(rig => rig.app_id === wsjtxRigFilter) && (
-                <option value={wsjtxRigFilter}>{wsjtxRigFilter} (saved)</option>
-              )}
-              {wsjtxKnownRigs.map(rig => (
-                <option key={rig.app_id} value={rig.app_id}>
-                  {rig.config_name ? `${rig.app_id} (${rig.config_name})` : rig.app_id}
-                </option>
-              ))}
-            </select>
+              options={[
+                { value: "", label: "Any rig" },
+                ...(wsjtxRigFilter && !wsjtxKnownRigs.some(rig => rig.app_id === wsjtxRigFilter)
+                  ? [{ value: wsjtxRigFilter, label: `${wsjtxRigFilter} (saved)` }]
+                  : []),
+                ...wsjtxKnownRigs.map(rig => ({
+                  value: rig.app_id,
+                  label: rig.config_name ? `${rig.app_id} (${rig.config_name})` : rig.app_id,
+                })),
+              ]}
+              onChange={(v) => { void applyWsjtxRigFilter(v); }}
+            />
           </label>
           {wsjtxRigDiscoveryError && (
             <span title={wsjtxRigDiscoveryError} style={{ fontSize: 10, color: "var(--yellow)" }}>
