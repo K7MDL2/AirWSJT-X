@@ -1,12 +1,16 @@
 [Unit]
 Description=rtl_tcp, on demand (started and stopped by dongle-arbiter)
-# Only one program can own the RTL-SDR at a time.
-Conflicts=dump1090-mutability.service rtl_tcp.service dump1090-ondemand.service
+# Only one program can own this dongle at a time. Do NOT list rtl_tcp.service or any
+# other rtl_tcp unit here: Conflicts= stops the listed unit whenever this one starts,
+# which would shut down a separate rtl_tcp service running on a second dongle.
+Conflicts=dump1090-mutability.service dump1090-ondemand.service
 
 [Service]
 User=dump1090
 # Localhost only, on a private port: the arbiter listens on the public port (1234)
 # and forwards to this one. Keep -p in sync with backend_port in the arbiter config.
+# if you have more than 1 RTL dongle ise -d x to specify which to use.  
+# It must match the dump1090 service device-index value.
 ExecStart=/usr/local/bin/rtl_tcp -d 0 -a 127.0.0.1 -p 12340 -f 1090000000
 Restart=on-failure
 # rtl_tcp exits with status 1 when stopped, which is a normal stop here.
