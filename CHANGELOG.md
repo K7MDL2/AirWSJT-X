@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.18
+
+### Fixed
+- Build: add `vite-env.d.ts` for CSS module type declarations (fixes TS2882 after vite-typescript bump).
+
 ## 0.3.17
 
 ### Added
