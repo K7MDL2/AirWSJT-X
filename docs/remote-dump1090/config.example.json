@@ -1,0 +1,19 @@
+{
+  "profiles": [
+    {
+      "name": "dump1090",
+      "listen_port": 30003,
+      "backend_port": 30103,
+      "start_cmd": ["systemctl", "start", "dump1090-ondemand"],
+      "stop_cmd": ["systemctl", "stop", "dump1090-ondemand"],
+      "refusal_message": "BUSY,RTL-SDR in use by {owner}; free about {grace}s after it disconnects"
+    },
+    {
+      "name": "rtl_tcp",
+      "listen_port": 1234,
+      "backend_port": 12340,
+      "start_cmd": ["systemctl", "start", "rtl-tcp-ondemand"],
+      "stop_cmd": ["systemctl", "stop", "rtl-tcp-ondemand"]
+    }
+  ]
+}

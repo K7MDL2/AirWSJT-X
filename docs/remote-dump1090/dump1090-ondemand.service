@@ -1,0 +1,21 @@
+[Unit]
+Description=dump1090-mutability, on demand (started and stopped by dongle-arbiter)
+# Only one program can own this dongle at a time. Do NOT list rtl_tcp.service or any
+# other rtl_tcp unit here: Conflicts= stops the listed unit whenever this one starts,
+# which would shut down a separate rtl_tcp service running on a second dongle.
+Conflicts=dump1090-mutability.service rtl-tcp-ondemand.service
+
+[Service]
+User=dump1090
+# Reuse the receiver location and tuning from the packaged service's settings.
+EnvironmentFile=-/etc/default/dump1090-mutability
+RuntimeDirectory=dump1090-mutability
+# Localhost only, SBS output only, on a private port: the arbiter listens on the
+# public port (30003) and forwards to this one.
+# If you have more than 1 RTL dongle, use --device-index x to specify which one to use
+ExecStart=/usr/bin/dump1090-mutability --net --net-bind-address 127.0.0.1 \
+    --net-sbs-port 30103 --net-ri-port 0 --net-ro-port 0 --net-bi-port 0 --net-bo-port 0 \
+    --fix --ppm ${PPM} --lat ${LAT} --lon ${LON} --max-range ${MAX_RANGE} \
+    --write-json /run/dump1090-mutability --write-json-every 1 --json-location-accuracy 1 --quiet \
+    --device-index 0
+Restart=on-failure

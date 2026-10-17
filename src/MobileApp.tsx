@@ -7,9 +7,10 @@ import {
   haversineKm,
   slantRangeKm,
 } from "./lib/geo";
-import { Aircraft, OpenSkyPoller, fetchNativeAircraft } from "./lib/opensky";
+import { Aircraft, OpenSkyPoller, fetchDump1090Aircraft, fetchNativeAircraft } from "./lib/opensky";
 import { invoke } from "@tauri-apps/api/core";
 import AircraftAccounts from "./AircraftAccounts";
+import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
 import { downloadDb, getDbStatus, DbStatus } from "./lib/callsign";
 import { isSpeechSupported, speak } from "./lib/speech";
 import { HeadingSmoother, headingFromOrientation, normalizeDegrees, signedHeadingDelta } from "./lib/compass";
@@ -242,7 +243,8 @@ interface MobileSettings {
   dxCall: string;
   dxGrid: string;
   speechEnabled: boolean;
-  aircraftSource?: "opensky" | "adsbexchange";
+  aircraftSource?: "opensky" | "adsbexchange" | "dump1090";
+  dump1090Host?: string;
 }
 
 function loadSettings(): MobileSettings {
@@ -279,6 +281,24 @@ export default function MobileApp() {
   const saveSettings = useCallback((next: MobileSettings) => {
     setSettings(next);
     localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+  }, []);
+
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const loadDump1090Host = useCallback(async (): Promise<Dump1090Host> =>
+    ({ host: settingsRef.current.dump1090Host ?? "", port: 30003 }), []);
+  // Saving a host selects dump1090; disabling it falls back to OpenSky.
+  const saveDump1090Host = useCallback(async (host: string): Promise<Dump1090Host> => {
+    const current = settingsRef.current;
+    const next: MobileSettings = {
+      ...current,
+      dump1090Host: host,
+      aircraftSource: host ? "dump1090" : current.aircraftSource === "dump1090" ? "opensky" : current.aircraftSource,
+    };
+    settingsRef.current = next;
+    setSettings(next);
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+    return { host, port: 30003 };
   }, []);
 
   const hasStation = settings.myGrid.length >= 4;
@@ -402,15 +422,23 @@ export default function MobileApp() {
 
     const bbox = 3;
     const source = settings.aircraftSource ?? "opensky";
+    const dumpHost = (settings.dump1090Host ?? "").trim();
+    if (source === "dump1090" && !dumpHost) {
+      setAircraft([]);
+      setStatus("Enter the dump1090 address in Settings");
+      return;
+    }
     let disposed = false;
     const poller = new OpenSkyPoller({
       latMin: Math.max(-90, myLat - bbox),
       lonMin: Math.max(-180, myLon - bbox * 2),
       latMax: Math.min(90, myLat + bbox),
       lonMax: Math.min(180, myLon + bbox * 2),
-      intervalMs: 30000,
+      intervalMs: source === "dump1090" ? 5000 : 30000,
       minimumIntervalMs: source === "opensky" ? 10000 : 5000,
-      fetchAircraft: (latMin, lonMin, latMax, lonMax) => fetchNativeAircraft(source, latMin, lonMin, latMax, lonMax),
+      fetchAircraft: source === "dump1090"
+        ? () => fetchDump1090Aircraft(dumpHost)
+        : (latMin, lonMin, latMax, lonMax) => fetchNativeAircraft(source, latMin, lonMin, latMax, lonMax),
       onUpdate: (raw: Aircraft[]) => {
         const withPos = raw.filter(
           (a) => a.lat != null && a.lon != null && a.altitude_m != null && a.altitude_m > 0 && !a.on_ground,
@@ -437,12 +465,21 @@ export default function MobileApp() {
         mapped.sort((a, b) => a.distance_km - b.distance_km);
         setAircraft(mapped);
         setLastUpdate(Date.now());
-        setStatus(`${mapped.length} aircraft in range`);
+        setStatus(source === "dump1090"
+          ? raw.length === 0
+            ? "dump1090 connected — no aircraft received"
+            : `dump1090: ${raw.length} received, ${mapped.length} with position`
+          : `${mapped.length} aircraft in range`);
       },
       onError: (msg) => setStatus(`Error: ${msg}`),
       onRateLimited: (ms) => setStatus(`Rate limited — retry in ${Math.round(ms / 1000)}s`),
     });
     pollerRef.current = poller;
+    if (source === "dump1090") {
+      poller.start();
+      setStatus("Connecting to dump1090...");
+      return () => { disposed = true; poller.stop(); void invoke("stop_mobile_dump1090").catch(() => {}); };
+    }
     setStatus("Loading aircraft settings...");
     invoke<{ opensky_poll_interval_s: number; adsbexchange_poll_interval_s: number }>("get_source_credentials_status")
       .then(value => {
@@ -454,7 +491,7 @@ export default function MobileApp() {
       }).catch(() => { if (!disposed) setStatus("Cannot read secure aircraft account settings"); });
 
     return () => { disposed = true; poller.stop(); };
-  }, [hasStation, settings.myGrid, settings.aircraftSource, accountRevision]);
+  }, [hasStation, settings.myGrid, settings.aircraftSource, settings.dump1090Host, accountRevision]);
 
   // GPS altitude feeds the station height used for elevation/range
   useEffect(() => watchGpsAltitude((alt) => { stationAltRef.current = alt ?? 0; }), []);
@@ -548,12 +585,15 @@ export default function MobileApp() {
           </label>
           <label style={{ color: "#c9d1d9" }}>Aircraft source
             <select aria-label="Aircraft source" value={settings.aircraftSource ?? "opensky"}
-              onChange={e => saveSettings({ ...settings, aircraftSource: e.target.value === "adsbexchange" ? "adsbexchange" : "opensky" })}>
+              onChange={e => saveSettings({ ...settings, aircraftSource:
+                e.target.value === "adsbexchange" ? "adsbexchange" : e.target.value === "dump1090" ? "dump1090" : "opensky" })}>
               <option value="opensky">OpenSky</option>
               <option value="adsbexchange">ADS-B Exchange</option>
+              <option value="dump1090">dump1090 (network)</option>
             </select>
           </label>
           <AircraftAccounts onLog={accountLog} onChanged={accountsChanged} />
+          <Dump1090Source mobile load={loadDump1090Host} save={saveDump1090Host} onLog={accountLog} />
           <div style={{ borderTop: "1px solid #30363d", paddingTop: 16 }}>
             <div style={{ fontSize: 14, color: "#8b949e", marginBottom: 8 }}>Callsign Database</div>
             {dbStatus && (

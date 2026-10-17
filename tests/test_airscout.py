@@ -1,10 +1,73 @@
 import json
+import socket
+import threading
+import time
 import unittest
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 from airwsjtx.airscout import Dump1090Feed, OpenSkyFeed, SourceRateLimit
 from airwsjtx.geo import heading_delta_deg, heading_within_tolerance
+
+
+class Dump1090FeedConnectionTests(unittest.TestCase):
+    """Real sockets against a one-shot local server."""
+
+    def _serve_once(self, payload: bytes, hold_s: float) -> int:
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+
+        def run() -> None:
+            conn, _ = server.accept()
+            if payload:
+                conn.sendall(payload)
+            time.sleep(hold_s)
+            conn.close()
+            server.close()
+
+        threading.Thread(target=run, daemon=True).start()
+        return server.getsockname()[1]
+
+    def _run_feed(self, port: int, seconds: float) -> dict[str, list]:
+        events: dict[str, list] = {"connected": [], "busy": [], "error": []}
+        feed = Dump1090Feed(
+            host="127.0.0.1", port=port, report_interval_s=1.0,
+            on_connected=lambda: events["connected"].append(True),
+            on_busy=events["busy"].append,
+            on_error=events["error"].append,
+        )
+        feed.start()
+        time.sleep(seconds)
+        feed.stop()
+        events["feed"] = [feed]
+        return events
+
+    def test_busy_message_is_reported_and_connection_is_not_called_connected(self) -> None:
+        port = self._serve_once(b"BUSY,RTL-SDR in use by rtl_tcp; free about 30s\r\n", hold_s=0)
+        events = self._run_feed(port, 1.8)
+        self.assertEqual(events["busy"], ["RTL-SDR in use by rtl_tcp; free about 30s"])
+        self.assertEqual(events["connected"], [])
+        self.assertEqual(events["feed"][0].messages_received, 0)
+
+    def test_immediate_close_is_not_called_connected(self) -> None:
+        port = self._serve_once(b"", hold_s=0)
+        events = self._run_feed(port, 1.8)
+        self.assertEqual(events["connected"], [])
+        self.assertEqual(events["busy"], [])
+
+    def test_quiet_receiver_counts_as_connected(self) -> None:
+        port = self._serve_once(b"", hold_s=3)
+        events = self._run_feed(port, 2.2)
+        self.assertEqual(events["connected"], [True])
+        self.assertEqual(events["busy"], [])
+
+    def test_first_data_line_is_kept_when_connecting(self) -> None:
+        line = b"MSG,3,1,1,ABC123,0,0,0,0,0,TEST,35000,0,0,47,-122,0,0,0,0,0,0\r\n"
+        port = self._serve_once(line, hold_s=3)
+        events = self._run_feed(port, 2.2)
+        self.assertEqual(events["connected"], [True])
+        self.assertIn("abc123", events["feed"][0]._aircraft)
 
 
 class _FakeStopEvent:
@@ -26,6 +89,19 @@ class _FakeStopEvent:
 class Dump1090FeedParsingTests(unittest.TestCase):
     def test_default_report_interval_is_five_seconds(self) -> None:
         self.assertEqual(Dump1090Feed().report_interval_s, 5.0)
+
+    def test_message_counter_counts_valid_lines_only(self) -> None:
+        feed = Dump1090Feed()
+        self.assertEqual(feed.messages_received, 0)
+        self.assertIsNone(feed.last_message_epoch_s)
+        for line in ("", "garbage", "MSG,3", "STA,6,1,1,ABC123,1"):
+            feed._parse_sbs(line)
+        self.assertEqual(feed.messages_received, 0)
+        with patch("airwsjtx.airscout.time.time", return_value=1000):
+            feed._parse_sbs("MSG,3,1,1,ABC123,0,0,0,0,0,TEST,35000,0,0,47,-122,0,0,0,0,0,0")
+            feed._parse_sbs("MSG,4,1,1,ABC123,0,0,0,0,0,TEST,0,420,180,0,0,0,0,0,0,0,0")
+        self.assertEqual(feed.messages_received, 2)
+        self.assertEqual(feed.last_message_epoch_s, 1000)
 
     def test_position_timestamp_does_not_advance_for_velocity_reports(self) -> None:
         feed = Dump1090Feed()

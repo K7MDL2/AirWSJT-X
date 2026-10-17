@@ -459,6 +459,7 @@ class Dump1090Feed:
         on_error: Callable[[str], None] | None = None,
         on_connected: Callable[[], None] | None = None,
         on_disconnected: Callable[[], None] | None = None,
+        on_busy: Callable[[str], None] | None = None,
     ) -> None:
         self.host = host
         self.port = port
@@ -468,10 +469,14 @@ class Dump1090Feed:
         self.on_error = on_error
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
+        self.on_busy = on_busy
+        self.busy_message: str | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._aircraft: dict[str, Aircraft] = {}
         self._lock = threading.Lock()
+        self.messages_received = 0
+        self.last_message_epoch_s: float | None = None
 
     def start(self) -> None:
         self._stop.clear()
@@ -507,6 +512,12 @@ class Dump1090Feed:
         clean = line.strip().strip("\x00")
         if not clean:
             return
+        if clean.startswith("BUSY,"):
+            # Sent by a shared-receiver host that is serving another program.
+            self.busy_message = clean[5:].strip() or "receiver busy"
+            if self.on_busy:
+                self.on_busy(self.busy_message)
+            return
         if clean.startswith("*"):
             clean = clean[1:]
         parts = [p.strip() for p in clean.split(",")]
@@ -520,6 +531,9 @@ class Dump1090Feed:
         callsign_raw = parts[10] if len(parts) > 10 else ""
 
         with self._lock:
+            self.busy_message = None
+            self.messages_received += 1
+            self.last_message_epoch_s = time.time()
             ac = self._aircraft.setdefault(
                 icao24,
                 Aircraft(
@@ -587,39 +601,61 @@ class Dump1090Feed:
             for k in stale:
                 del self._aircraft[k]
 
+    def _consume(self, buf: str, chunk: str) -> str:
+        buf += chunk
+        while "\n" in buf:
+            line, buf = buf.split("\n", 1)
+            self._parse_sbs(line.strip())
+        return buf
+
+    def _serve(self, sock: socket.socket) -> None:
+        self.busy_message = None
+        sock.settimeout(1.0)
+        buf = ""
+        # A host that refuses us (for example a shared receiver that is in use) closes
+        # right away or says why first, so only report "connected" once it has not.
+        try:
+            first = sock.recv(4096)
+        except socket.timeout:
+            first = None
+        if first is not None:
+            if not first:
+                return
+            buf = self._consume(buf, first.decode("ascii", "ignore"))
+            if self.busy_message:
+                return
+        sock.settimeout(5.0)
+        if self.on_connected:
+            self.on_connected()
+        last_report = time.monotonic()
+
+        while not self._stop.is_set():
+            try:
+                chunk = sock.recv(4096).decode("ascii", "ignore")
+                if not chunk:
+                    break
+                buf = self._consume(buf, chunk)
+            except socket.timeout:
+                pass
+
+            now = time.monotonic()
+            if now - last_report >= self.report_interval_s:
+                self._expire_stale()
+                if self.on_update:
+                    with self._lock:
+                        self.on_update(list(self._aircraft.values()))
+                last_report = now
+
     def _run(self) -> None:
         while not self._stop.is_set():
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(10.0)
-                sock.connect((self.host, self.port))
-                sock.settimeout(5.0)
-                if self.on_connected:
-                    self.on_connected()
-                buf = ""
-                last_report = time.monotonic()
-
-                while not self._stop.is_set():
-                    try:
-                        chunk = sock.recv(4096).decode("ascii", "ignore")
-                        if not chunk:
-                            break
-                        buf += chunk
-                        while "\n" in buf:
-                            line, buf = buf.split("\n", 1)
-                            self._parse_sbs(line.strip())
-                    except socket.timeout:
-                        pass
-
-                    now = time.monotonic()
-                    if now - last_report >= self.report_interval_s:
-                        self._expire_stale()
-                        if self.on_update:
-                            with self._lock:
-                                self.on_update(list(self._aircraft.values()))
-                        last_report = now
-
-                sock.close()
+                try:
+                    sock.settimeout(10.0)
+                    sock.connect((self.host, self.port))
+                    self._serve(sock)
+                finally:
+                    sock.close()
             except Exception as e:
                 if self.on_error:
                     self.on_error(str(e))

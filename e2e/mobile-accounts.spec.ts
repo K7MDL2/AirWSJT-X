@@ -29,6 +29,37 @@ test("mobile accounts are available and use native aircraft requests for both pr
   expect(storage).not.toContain("fake-mobile-key");
 });
 
+test("mobile dump1090 source is selected by saving an address and disabled returns to OpenSky", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByText("dump1090 source", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Use local (127.0.0.1)" })).toHaveCount(0);
+  await page.getByLabel("dump1090 IP address or hostname").fill("bad host;");
+  await page.getByRole("button", { name: "Save dump1090 source", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("valid IP address or hostname");
+  await page.getByLabel("dump1090 IP address or hostname").fill("192.168.2.58");
+  await page.getByRole("button", { name: "Save dump1090 source", exact: true }).click();
+  await expect(page.getByLabel("Aircraft source", { exact: true })).toHaveValue("dump1090");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __mockDump1090Requests?: { host: string }[] }).__mockDump1090Requests?.[0]?.host,
+  )).toBe("192.168.2.58");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByText("dump1090 source", { exact: true }).click();
+  await page.getByRole("button", { name: "Disable dump1090", exact: true }).click();
+  await expect(page.getByLabel("Aircraft source", { exact: true })).toHaveValue("opensky");
+  await expect(page.getByLabel("dump1090 IP address or hostname")).toHaveValue("");
+  await page.getByLabel("dump1090 IP address or hostname").fill("127.0.0.1");
+  await page.getByRole("button", { name: "Save dump1090 source", exact: true }).click();
+  await expect(page.getByRole("status")).toContainText("dump1090 source set to 127.0.0.1:30003");
+  await expect(page.getByLabel("Aircraft source", { exact: true })).toHaveValue("dump1090");
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await expect.poll(() => page.evaluate(() =>
+    (window as unknown as { __mockDump1090Requests?: { host: string }[] }).__mockDump1090Requests
+      ?.some(call => call.host === "127.0.0.1"),
+  )).toBe(true);
+});
+
 test("mobile uses a saved 10-second OpenSky polling cadence", async ({ page }) => {
   await page.clock.install();
   await page.addInitScript(() => {

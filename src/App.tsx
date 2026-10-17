@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
+import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
 import { haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
@@ -74,6 +75,14 @@ interface AirscoutSourceState {
   priority: string[];
   sources: Record<string, { state: string; message: string | null }>;
   poll_intervals_s?: Record<string, number>;
+}
+interface Dump1090Activity {
+  host: string;
+  port: number;
+  messages: number;
+  aircraft: number;
+  with_position: number;
+  last_message_age_s: number | null;
 }
 interface CallsignDbStatus {
   db_url: string;
@@ -149,6 +158,10 @@ async function rpc(method: string, params: Record<string, unknown> = {}): Promis
   });
 }
 
+const loadDump1090Host = () => rpc("airscout_get_dump1090_host") as Promise<Dump1090Host>;
+const saveDump1090Host = (host: string) =>
+  rpc("airscout_set_dump1090_host", { host }) as Promise<Dump1090Host>;
+
 // ─── Colours ──────────────────────────────────────────────────────────────────
 
 const STATE_COLOR: Record<string, string> = {
@@ -198,6 +211,9 @@ export default function App() {
   const [decodes, setDecodes] = useState<WsjtxDecodeEntry[]>([]);
   const [airscout, setAirscout] = useState<AirscoutUpdate | null>(null);
   const [sourceStatus, setSourceStatus] = useState<AirscoutSourceState | null>(null);
+  const [dump1090Activity, setDump1090Activity] = useState<Dump1090Activity | null>(null);
+  const dump1090LogRef = useRef<{ signature: string; at: number } | null>(null);
+  const dump1090BusyLogRef = useRef<{ signature: string; at: number } | null>(null);
   const [rotatorConnected, setRotatorConnected] = useState(false);
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
@@ -369,6 +385,28 @@ export default function App() {
             addLog(`DX: ${entry.message ?? "?"} SNR ${entry.snr}dB`);
           } else if (evt === "airscout_update") {
             setAirscout(evtData as unknown as AirscoutUpdate);
+          } else if (evt === "dump1090_busy") {
+            const signature = `${evtData.host}:${evtData.message}`;
+            const last = dump1090BusyLogRef.current;
+            // The host is retried every few seconds; log a change, then a reminder each minute.
+            if (!last || last.signature !== signature || Date.now() - last.at >= 60000) {
+              dump1090BusyLogRef.current = { signature, at: Date.now() };
+              addLog(`dump1090 ${evtData.host}:${evtData.port} busy: ${evtData.message} (retrying)`);
+            }
+          } else if (evt === "dump1090_activity") {
+            dump1090BusyLogRef.current = null;
+            const activity = evtData as unknown as Dump1090Activity;
+            setDump1090Activity(activity);
+            const signature = `${activity.host}:${activity.aircraft}:${activity.with_position}`;
+            const last = dump1090LogRef.current;
+            const idle = activity.aircraft === 0;
+            // Log on change, plus a periodic reminder while idle so silence isn't mistaken for a hang.
+            if (!last || last.signature !== signature || (idle && Date.now() - last.at >= 60000)) {
+              dump1090LogRef.current = { signature, at: Date.now() };
+              addLog(idle
+                ? `dump1090 ${activity.host}:${activity.port}: connected, no aircraft received (${activity.messages} messages total)`
+                : `dump1090 ${activity.host}:${activity.port}: ${activity.aircraft} aircraft, ${activity.with_position} with position (${activity.messages} messages)`);
+            }
           } else if (evt === "airscout_source_status") {
             setSourceStatus(evtData as unknown as AirscoutSourceState);
           } else if (evt === "airscout_source_switched") {
@@ -619,25 +657,30 @@ export default function App() {
   const activeSourceMessage = activeSource ? sourceStatus?.sources?.[activeSource]?.message ?? null : null;
   const internetSourceState = activeSource === "adsbexchange"
     ? activeSourceState : sourceStatus?.sources?.opensky?.state ?? "stopped";
+  const dump1090Busy = activeSource === "dump1090" && activeSourceState === "busy";
   const connectivityState = activeSource === "dump1090" && activeSourceState === "connected"
     ? "local"
-    : internetSourceState === "connected"
-      ? "online"
-      : ["backoff", "connecting", "disconnected"].includes(internetSourceState)
-        ? "degraded"
-        : "offline";
+    : dump1090Busy
+      ? "busy"
+      : internetSourceState === "connected"
+        ? "online"
+        : ["backoff", "connecting", "disconnected"].includes(internetSourceState)
+          ? "degraded"
+          : "offline";
   const connectivityColor = connectivityState === "online" || connectivityState === "local"
     ? "var(--green)"
-    : connectivityState === "degraded"
+    : connectivityState === "degraded" || connectivityState === "busy"
       ? "var(--yellow)"
       : "var(--red)";
   const connectivityLabel = connectivityState === "local"
     ? "LOCAL ADS-B"
-    : connectivityState === "online"
-      ? "NET ONLINE"
-      : connectivityState === "degraded"
-        ? "NET DEGRADED"
-        : "NET OFFLINE";
+    : connectivityState === "busy"
+      ? "DUMP1090 BUSY"
+      : connectivityState === "online"
+        ? "NET ONLINE"
+        : connectivityState === "degraded"
+          ? "NET DEGRADED"
+          : "NET OFFLINE";
   const cacheAgeSeconds = airscout?.last_update_epoch_s
     ? Math.max(0, nowEpochS - airscout.last_update_epoch_s)
     : airscout?.cache_age_s ?? null;
@@ -645,7 +688,7 @@ export default function App() {
   const freshnessLabel = ["fresh", "stale", "expired"].includes(dataFreshness) ? dataFreshness : "waiting";
   const sourceDotColor = activeSourceState === "connected"
     ? "var(--green)"
-    : activeSourceState === "backoff" || activeSourceState === "connecting"
+    : activeSourceState === "backoff" || activeSourceState === "connecting" || activeSourceState === "busy"
       ? "var(--yellow)"
       : "var(--red)";
   const availableSources = sourceStatus ? Object.keys(sourceStatus.sources) : ["opensky", "adsbexchange"];
@@ -1266,6 +1309,15 @@ export default function App() {
                     {filteredAircraftCount}/{totalAircraftCount} shown
                   </span>
                 )}
+                {activeSource === "dump1090" && dump1090Activity && (
+                  <div style={{ color: "var(--text-muted)" }}>
+                    dump1090 {dump1090Activity.host}:{dump1090Activity.port} · {dump1090Activity.messages} messages
+                    {" · "}{dump1090Activity.aircraft} aircraft ({dump1090Activity.with_position} with position)
+                    {dump1090Activity.last_message_age_s != null
+                      ? ` · last message ${Math.round(dump1090Activity.last_message_age_s)}s ago`
+                      : " · no messages yet — idle until an aircraft is in range"}
+                  </div>
+                )}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(100px, 1fr))", gap: 4 }}>
                 {[
@@ -1358,6 +1410,7 @@ export default function App() {
                 })}
               </div>
               <AircraftAccounts onLog={addLog} />
+              <Dump1090Source load={loadDump1090Host} save={saveDump1090Host} onLog={addLog} />
               {sourceStatus?.sources?.adsbexchange?.message && (
                 <div style={{ fontSize: 10, color: "var(--yellow)" }}>
                   ADS-B Exchange: {sourceStatus.sources.adsbexchange.message}
