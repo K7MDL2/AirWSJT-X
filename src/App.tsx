@@ -103,6 +103,7 @@ interface AircraftFilterSettings {
   lon_max: number | null;
   altitude_min_ft: number | null;
   heading_tolerance_deg: number;
+  position_tolerance_deg: number;
 }
 
 const DEFAULT_AIRCRAFT_FILTERS: AircraftFilterSettings = {
@@ -112,6 +113,7 @@ const DEFAULT_AIRCRAFT_FILTERS: AircraftFilterSettings = {
   lon_max: null,
   altitude_min_ft: null,
   heading_tolerance_deg: 30,
+  position_tolerance_deg: 70,
 };
 
 function getAircraftFilterStorageKey(stationA: string | null | undefined, stationB: string | null | undefined): string {
@@ -138,6 +140,7 @@ function loadAircraftFilters(stationA: string | null | undefined, stationB: stri
       lon_max: parsed.lon_max ?? null,
       altitude_min_ft: parsed.altitude_min_ft ?? null,
       heading_tolerance_deg: Number(parsed.heading_tolerance_deg ?? 30),
+      position_tolerance_deg: Number(parsed.position_tolerance_deg ?? 70),
     };
   } catch {
     return DEFAULT_AIRCRAFT_FILTERS;
@@ -707,7 +710,8 @@ export default function App() {
     const normalized: AircraftFilterSettings = {
       ...nextFilters,
       heading_tolerance_deg: Number.isFinite(nextFilters.heading_tolerance_deg) ? nextFilters.heading_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.heading_tolerance_deg,
-    };
+            position_tolerance_deg: Number.isFinite(nextFilters.position_tolerance_deg) ? nextFilters.position_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.position_tolerance_deg,
+          };
     const storageKey = getAircraftFilterStorageKey(airscout?.station_a, airscout?.station_b);
     localStorage.setItem(storageKey, JSON.stringify(normalized));
     setAircraftFilters(normalized);
@@ -1327,6 +1331,7 @@ export default function App() {
                   ["lon_max", "Max lon", "number"],
                   ["altitude_min_ft", "Min alt ft", "number"],
                   ["heading_tolerance_deg", "Heading ±°", "number"],
+                  ["position_tolerance_deg", "Path bearing ±°", "number"],
                 ].map(([key, label, type]) => {
                   const value = aircraftFilters[key as keyof AircraftFilterSettings];
                   return (
@@ -1341,6 +1346,9 @@ export default function App() {
                           (next as Record<string, number | null>)[key] = parsed;
                           if (key === "heading_tolerance_deg") {
                             next.heading_tolerance_deg = parsed ?? DEFAULT_AIRCRAFT_FILTERS.heading_tolerance_deg;
+                          }
+                          if (key === "position_tolerance_deg") {
+                            next.position_tolerance_deg = parsed ?? DEFAULT_AIRCRAFT_FILTERS.position_tolerance_deg;
                           }
                           persistAircraftFilters(next);
                         }}
