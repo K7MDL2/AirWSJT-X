@@ -1,7 +1,9 @@
 [Unit]
 Description=rtl_tcp, on demand (started and stopped by dongle-arbiter)
-# Only one program can own the RTL-SDR at a time.
-Conflicts=dump1090-mutability.service rtl_tcp.service dump1090-ondemand.service
+# Only one program can own this dongle at a time. Do NOT list rtl_tcp.service or any
+# other rtl_tcp unit here: Conflicts= stops the listed unit whenever this one starts,
+# which would shut down a separate rtl_tcp service running on a second dongle.
+Conflicts=dump1090-mutability.service dump1090-ondemand.service
 
 [Service]
 User=dump1090

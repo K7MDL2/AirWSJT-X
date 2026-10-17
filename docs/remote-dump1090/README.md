@@ -68,7 +68,7 @@ at boot any more, and must be **stopped** (disabling alone leaves a running serv
 30003, and the arbiter then cannot bind):
 
 ```bash
-sudo systemctl disable --now dump1090-mutability rtl_tcp    # whichever exist
+sudo systemctl disable --now dump1090-mutability rtl_tcp    # whichever exist; keep a separate rtl_tcp service for a 2nd dongle
 sudo systemctl enable --now dongle-arbiter
 ```
 
@@ -99,6 +99,21 @@ services again.
   matching profiles if you need them.
 - If `rtl_tcp` is used with a tuner or gain script, it still sees the standard
   protocol; the arbiter only forwards bytes.
+
+If you have more than 1 RTL dongle, you need to specify which to use.
+- Run `rtl_test -l` to see a list of devices and their Index number.  Use this 
+  number for both edits below, they must match.  
+  The device index is usually 0 for one device, 0 and 1 for 2 devices
+- Edit `/etc/systemd/system/dump1090-ondemand.service` to update --device-index
+  value for your device.
+- Edit `/etc/systemd/system/rtl-tcp-ondemand.service` to update `-d` with the same
+  device index.
+- You can set up a separate rtl_tcp service for the 2nd dongle (any unit name, for example
+  `rtl_tcp.service`). Give it its own device index and a port other than 1234 and 12340.
+  The on-demand units deliberately have no `Conflicts=` on it, so the arbiter starting or
+  stopping dump1090 or rtl_tcp never touches the 2nd dongle's service. If you copied
+  these units before this change, remove `rtl_tcp.service` from their `Conflicts=` line,
+  then run `sudo systemctl daemon-reload`.
 
 ## Tested
 
