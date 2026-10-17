@@ -23,7 +23,8 @@ All platforms are built from CI on every tagged release.
 | **macOS** (Apple Silicon) | `.dmg` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
 | **Windows** (x64) | `.msi` / `.exe` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
 | **Linux** (x64) | `.AppImage` / `.deb` / `.rpm` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
-| **Android** | `.apk` (signed) | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
+| **Android** (ARM) | `.apk` (signed, arm64 + armeabi-v7a) | [Download](https://github.com/K7MDL2/AirWSJT-X/releases/latest/download/AirWSJT-X-android-arm.apk) |
+| **Android** (x86_64) | `.apk` (signed) | [Download](https://github.com/K7MDL2/AirWSJT-X/releases/latest/download/AirWSJT-X-android-x86_64.apk) |
 
 ## Architecture
 
@@ -106,12 +107,16 @@ npx tauri android init
 npx tauri android build --apk
 ```
 
-### Linux (VS Code)
+GitHub Actions builds signed Android APKs for pushes and pull requests targeting `main`. Download them from the run's **Artifacts** section. Pull requests without access to repository signing secrets use a temporary key, so those APKs cannot update an installation signed by the release key. Version-tag builds are also attached to the GitHub release.
+
+### Desktop (VS Code)
 
 Open in VS Code and use **Terminal > Run Task**:
-- **AirWSJT-X: Build** — frontend + release binary (`Ctrl+Shift+B`)
-- **AirWSJT-X: Run** — launch `tauri dev`
-- **AirWSJT-X: Build and Run** — build then launch
+- **AirWSJT-X: Desktop Build** — frontend + release desktop binary (`Ctrl+Shift+B`)
+- **AirWSJT-X: Desktop Run** — launch the built release binary
+- **AirWSJT-X: Desktop Build and Run** — build release binary, then launch
+- **AirWSJT-X: Desktop Dev** — launch `tauri dev` with hot-reloading
+- **AirWSJT-X: Build Android APK** — build the Android APK (requires Android SDK/NDK setup) (currently untested)
 
 ### Running Tests
 
