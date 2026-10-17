@@ -1,6 +1,6 @@
 {
   "name": "airwsjtx",
-  "version": "0.3.18",
+  "version": "0.3.19",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -23,6 +23,7 @@
     "@types/react": "^19.1.6",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^6.1.2",
+    "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
     "vite": "^8.3.4"
   }

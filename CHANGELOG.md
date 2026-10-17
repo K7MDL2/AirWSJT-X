@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.19
+
+### Fixed
+- Build: add explicit `esbuild` dependency (Vite 8 no longer bundles it).
+
 ## 0.3.18
 
 ### Fixed
