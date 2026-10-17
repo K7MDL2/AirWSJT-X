@@ -221,7 +221,7 @@ jobs:
 
       - name: Upload .pkg as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-testflight-pkg
           path: ${{ runner.temp }}/AirWSJT-X.pkg
