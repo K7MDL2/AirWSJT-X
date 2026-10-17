@@ -5,7 +5,7 @@ import RotatorPanel from "./RotatorPanel";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
 import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
-import { haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
+import { bearingDeg, haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -725,6 +725,9 @@ export default function App() {
   const stationDistanceKm = isValidLocator(myGrid) && isValidLocator(selectedDxGrid)
     ? haversineKm(...locatorToLatlon(myGrid), ...locatorToLatlon(selectedDxGrid))
     : null;
+  const dxBearing = isValidLocator(myGrid) && isValidLocator(selectedDxGrid)
+    ? bearingDeg(...locatorToLatlon(myGrid), ...locatorToLatlon(selectedDxGrid))
+    : null;
 
   useEffect(() => {
     if (!status || myStationRestored.current) return;
@@ -900,8 +903,9 @@ export default function App() {
                 padding: "2px 6px",
                 borderRadius: 4,
                 border: "1px solid var(--border)",
-                background: "var(--surface)",
-                color: "var(--text)",
+                background: "#000",
+                color: "#e6edf3",
+                colorScheme: "dark",
               }}
               onChange={(e) => { void applyWsjtxRigFilter(e.target.value); }}
             >
@@ -1239,6 +1243,8 @@ export default function App() {
               targetAz={lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
               targetEl={lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
               connected={rotatorConnected}
+              dxAz={dxBearing}
+              dxLabel={dxCall}
               speechEnabled={rotatorSpeechEnabled}
               speechThresholdDeg={rotatorSpeechThresholdDeg}
               speechIntervalSec={rotatorSpeechIntervalSec}
