@@ -34,6 +34,10 @@ const RPC_RESPONSES: Record<string, (params: Record<string, unknown>) => unknown
     },
   }),
   wsjtx_set_rig_name_filter: () => null,
+  rotator_set: params => {
+    Object.assign(window, { __mockRotatorTarget: params });
+    return null;
+  },
 };
 
 export async function invoke(cmd: string, args?: Record<string, unknown>): Promise<unknown> {
