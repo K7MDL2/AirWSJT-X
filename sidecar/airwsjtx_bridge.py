@@ -32,7 +32,7 @@ from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
 from airwsjtx.tracking import build_track, select_best_aircraft
-from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXStatus
+from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXQsoLogged, WSJTXStatus
 
 supervisor = AirWSJTXSupervisor()
 _stdout_lock = threading.Lock()
@@ -86,6 +86,8 @@ _wsjtx_de_call: str | None = None
 _wsjtx_de_grid: str | None = None
 _station_b_call: str | None = None
 _dx_grid_manual: bool = False
+_manual_pointing: bool = False
+_rotator_control_enabled: bool = True
 
 # Aircraft display filters
 _DEFAULT_FILTERS = {
@@ -392,12 +394,24 @@ def handle(msg: dict) -> None:
             })
 
         elif method == "start_qso":
+            from airwsjtx.state_machine import SessionState
+            # After an abort or completed QSO the session is terminal; re-arm it for the still-locked plane
+            if supervisor.session.state in (SessionState.ABORTED, SessionState.COMPLETED) and _locked_aircraft_id:
+                _do_lock(_locked_aircraft_id)
             supervisor.operator_start_qso()
             _ok(id_, {"state": supervisor.session.state.value})
 
         elif method == "finish_qso":
-            supervisor.finish_qso(abort=params.get("abort", False))
-            _ok(id_, {"state": supervisor.session.state.value})
+            wsjtx_tx = None
+            if params.get("control_wsjtx") and _wsjtx_listener:
+                wsjtx_tx = _wsjtx_listener.send_halt_tx()
+            try:
+                supervisor.finish_qso(abort=params.get("abort", False))
+            except ValueError:
+                # Halt Tx must still go out when the app session is already closed but WSJT-X is transmitting
+                if not wsjtx_tx:
+                    raise
+            _ok(id_, {"state": supervisor.session.state.value, "wsjtx_tx_sent": wsjtx_tx})
 
         elif method == "get_status":
             s = supervisor.session
@@ -542,8 +556,20 @@ def handle(msg: dict) -> None:
             _start_rotator(host, port)
             _ok(id_, {"host": host, "port": port})
 
+        elif method == "set_pointing_mode":
+            global _manual_pointing
+            _manual_pointing = params.get("mode") == "manual"
+            _ok(id_, {"mode": "manual" if _manual_pointing else "rotator"})
+
+        elif method == "set_rotator_control":
+            global _rotator_control_enabled
+            _rotator_control_enabled = bool(params.get("enabled", True))
+            _ok(id_, {"enabled": _rotator_control_enabled})
+
         elif method == "rotator_set":
-            if not _rotator or not _rotator.connected:
+            if not _rotator_control_enabled:
+                _err(id_, "Rotator control is disabled")
+            elif not _rotator or not _rotator.connected:
                 _err(id_, "Rotator not connected")
             else:
                 az = float(params["azimuth"])
@@ -557,9 +583,12 @@ def handle(msg: dict) -> None:
             _ok(id_, {})
 
         elif method == "rotator_park":
-            if _rotator:
-                _rotator.park()
-            _ok(id_, {})
+            if not _rotator_control_enabled:
+                _err(id_, "Rotator control is disabled")
+            else:
+                if _rotator:
+                    _rotator.park()
+                _ok(id_, {})
 
         elif method == "rotator_status":
             pos = _rotator.current_position if _rotator else None
@@ -1055,8 +1084,8 @@ def _do_lock(icao24: str) -> dict | None:
     _locked_aircraft_id = icao24
     _lock_score = geo["scatter_score"]
 
-    # Point rotator immediately
-    if _rotator and _rotator.connected:
+    # Point rotator immediately (manual pointing mode ignores plane positions)
+    if _rotator and _rotator.connected and _rotator_control_enabled and not _manual_pointing:
         _rotator.set_position(geo["az_a"], geo["el_a"])
 
     info = {**_locked_aircraft_info(ac, geo), "hint": hint}
@@ -1130,8 +1159,8 @@ def _update_rotator_for_locked(aircraft: list[Aircraft]) -> None:
     except Exception:
         return
 
-    # Point rotator at new position
-    if _rotator and _rotator.connected:
+    # Point rotator at new position (unless manual pointing mode)
+    if _rotator and _rotator.connected and _rotator_control_enabled and not _manual_pointing:
         _rotator.set_position(geo["az_a"], geo["el_a"])
 
     # Check if aircraft has left the scatter window
@@ -1466,6 +1495,31 @@ def _on_wsjtx_decode(dec: WSJTXDecode) -> None:
     })
 
 
+def _on_wsjtx_qso_logged(qso: WSJTXQsoLogged) -> None:
+    from airwsjtx.state_machine import SessionState
+    # WSJT-X is the authority on a finished QSO; close the app session to match
+    completed = False
+    if supervisor.session.state == SessionState.ACTIVE_QSO:
+        try:
+            supervisor.finish_qso(abort=False)
+            completed = True
+        except Exception:
+            pass
+    _emit({
+        "event": "qso_logged",
+        "data": {
+            "dx_call": qso.dx_call,
+            "dx_grid": qso.dx_grid,
+            "freq_hz": qso.freq_hz,
+            "mode": qso.mode,
+            "report_sent": qso.report_sent,
+            "report_rcvd": qso.report_rcvd,
+            "state": supervisor.session.state.value,
+            "session_completed": completed,
+        },
+    })
+
+
 def _on_wsjtx_connected(app_id: str) -> None:
     _emit({"event": "wsjtx_connected", "data": {"app_id": app_id}})
 
@@ -1484,6 +1538,7 @@ def main() -> None:
     listener = WSJTXListener(
         on_status=_on_wsjtx_status,
         on_decode=_on_wsjtx_decode,
+        on_qso_logged=_on_wsjtx_qso_logged,
         on_connected=_on_wsjtx_connected,
         on_disconnected=_on_wsjtx_disconnected,
         on_error=_on_wsjtx_error,

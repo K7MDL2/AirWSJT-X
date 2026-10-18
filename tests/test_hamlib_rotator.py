@@ -4,7 +4,7 @@ import socket
 import threading
 import time
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 
@@ -61,6 +61,21 @@ class HamlibRotatorTests(unittest.TestCase):
         rot = self._create_mock_rotator(b"RPRT -1\n")
         pos = rot._get_position()
         self.assertIsNone(pos)
+
+    def test_set_position_preserves_overtravel_and_normalizes_out_of_range_values(self) -> None:
+        for az, el, expected_az, expected_el in (
+            (0.0, 0.0, 0.0, 0.0),
+            (360.0, 90.0, 360.0, 90.0),
+            (450.0, 95.0, 450.0, 90.0),
+            (-10.0, -5.0, 350.0, 0.0),
+            (460.0, 30.0, 100.0, 30.0),
+        ):
+            with self.subTest(az=az, el=el):
+                rot = HamlibRotator()
+                with patch.object(rot, "_send_command") as send:
+                    rot.set_position(az, el)
+                send.assert_called_once_with(f"P {expected_az:.1f} {expected_el:.1f}\n")
+                self.assertEqual(rot._target, RotatorPosition(expected_az, expected_el))
 
     def test_live_mock_server_polling_and_commands(self) -> None:
         """Run a mock TCP server speaking the rotctld protocol to test HamlibRotator."""

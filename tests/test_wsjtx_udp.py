@@ -9,8 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from airwsjtx.wsjtx_udp import (
-    MSG_DECODE, MSG_HEARTBEAT, MSG_STATUS, WSJTX_MAGIC,
-    WSJTXListener, WSJTXStatus, parse_status,
+    MSG_DECODE, MSG_HALT_TX, MSG_HEARTBEAT, MSG_QSO_LOGGED, MSG_STATUS, WSJTX_MAGIC,
+    WSJTXListener, WSJTXQsoLogged, WSJTXStatus, parse_qso_logged, parse_status,
 )
 
 
@@ -107,6 +107,48 @@ class WSJTXStatusParsingTests(unittest.TestCase):
         self.assertIsNotNone(st)
         assert st is not None
         self.assertIsNone(st.tr_period)
+
+
+class WSJTXQsoLoggedTests(unittest.TestCase):
+    @staticmethod
+    def _packet(app_id: str = "WSJT-X", time_spec: int = 1) -> bytes:
+        timestamp = struct.pack(">QIB", 2461332, 36000000, time_spec)
+        if time_spec == 2:
+            timestamp += struct.pack(">i", -25200)
+        return b"".join([
+            struct.pack(">III", WSJTX_MAGIC, 2, MSG_QSO_LOGGED),
+            _enc_str(app_id),
+            timestamp,
+            _enc_str("W7PUA"),
+            _enc_str("CN84"),
+            struct.pack(">Q", 1296150000),
+            _enc_str("Q65"),
+            _enc_str("-10"),
+            _enc_str("-12"),
+            _enc_str(None) * 3,
+            timestamp,
+            _enc_str(None) * 6,
+        ])
+
+    def test_parses_utc_and_offset_timestamps(self) -> None:
+        for time_spec in (1, 2):
+            with self.subTest(time_spec=time_spec):
+                self.assertEqual(
+                    parse_qso_logged(self._packet(time_spec=time_spec)),
+                    WSJTXQsoLogged("WSJT-X", "W7PUA", "CN84", 1296150000, "Q65", "-10", "-12"),
+                )
+
+    def test_rejects_truncated_or_wrong_message(self) -> None:
+        self.assertIsNone(parse_qso_logged(self._packet()[:32]))
+        self.assertIsNone(parse_qso_logged(_build_status_packet("Q65", 15)))
+
+    def test_only_selected_rig_logs_a_qso(self) -> None:
+        logged = Mock()
+        listener = WSJTXListener(rig_name_filter="Rig-A", on_qso_logged=logged)
+        self.assertFalse(listener._handle_datagram(self._packet("WSJT-X - Rig-B")))
+        logged.assert_not_called()
+        self.assertTrue(listener._handle_datagram(self._packet("WSJT-X - Rig-A")))
+        logged.assert_called_once_with(parse_qso_logged(self._packet("WSJT-X - Rig-A")))
 
 
 class WSJTXListenerFilterTests(unittest.TestCase):
@@ -453,12 +495,57 @@ class WSJTXListenerSocketTests(unittest.TestCase):
                 self.assertTrue(connected.is_set())
                 self.assertEqual(statuses[0].de_call, "K7MDL")
                 self.assertEqual(statuses[0].tr_period, 15.0)
+                self.assertTrue(listener.send_halt_tx())
+                sender.settimeout(2)
+                command, _ = sender.recvfrom(4096)
+                self.assertEqual(
+                    command,
+                    struct.pack(">III", WSJTX_MAGIC, 2, MSG_HALT_TX) + _enc_str("WSJT-X") + b"\x00",
+                )
         finally:
             listener.stop()
             if listener._thread:
                 listener._thread.join(2)
             sender.close()
             sock.close()
+
+
+class WSJTXListenerCommandTests(unittest.TestCase):
+    def _listener_with_socket(self, app_id: str | None):
+        from airwsjtx.wsjtx_udp import WSJTXListener
+        listener = WSJTXListener(port=2237)
+        sock = Mock()
+        listener._query_sock = sock
+        listener._active_app_id = app_id
+        return listener, sock
+
+    @staticmethod
+    def _header(msg_type: int, app_id: str) -> bytes:
+        raw = app_id.encode()
+        return struct.pack(">IIII", 0xADBCCBDA, 2, msg_type, len(raw)) + raw
+
+    def test_halt_tx_goes_to_the_address_wsjtx_sends_from(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        listener._handle_datagram(self._header(0, "WSJT-X") + struct.pack(">I", 2) + struct.pack(">I", 0xFFFFFFFF) * 2, ("127.0.0.1", 50123))
+        self.assertTrue(listener.send_halt_tx())
+        expected = self._header(8, "WSJT-X") + b"\x00"
+        sock.sendto.assert_called_once_with(expected, ("127.0.0.1", 50123))
+
+    def test_halt_tx_needs_a_known_wsjtx_address(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
+
+    def test_stale_wsjtx_address_is_not_used(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        listener._client_addrs["WSJT-X"] = {("127.0.0.1", 50123): time.monotonic() - 60}
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
+
+    def test_commands_need_a_connected_instance(self) -> None:
+        listener, sock = self._listener_with_socket(None)
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
 
 
 if __name__ == "__main__":
