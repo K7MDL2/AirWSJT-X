@@ -1625,12 +1625,16 @@ export default function App() {
           ▶ Start QSO
         </button>
         <button className="btn-danger" onClick={() => finishQso(true)}
-          title="Mark the QSO as aborted in the app. Use Halt Tx in WSJT-X to stop transmitting."
+          title={controlWsjtx
+            ? "Mark the QSO as aborted and send Halt Tx to WSJT-X to stop transmitting."
+            : "Mark the QSO as aborted in the app only. Use Halt Tx in WSJT-X to stop transmitting (or tick 'Halt WSJT-X Tx on Abort/Finish')."}
           disabled={displayState !== "active_qso" && ["idle", "completed", "aborted"].includes(state)}>
           ■ Abort
         </button>
         <button className="btn-secondary" onClick={() => finishQso(false)} disabled={state !== "active_qso"}
-          title="Mark the QSO as done in the app. WSJT-X also completes it automatically when it logs the contact.">
+          title={controlWsjtx
+            ? "Mark the QSO as done and send Halt Tx to WSJT-X. WSJT-X also completes it automatically when it logs the contact."
+            : "Mark the QSO as done in the app only. WSJT-X also completes it automatically when it logs the contact."}>
           ✓ Finish QSO
         </button>
         <div style={{ width: 1, height: 20, background: "var(--border)", margin: "0 4px" }} />
