@@ -119,11 +119,14 @@ test("mobile compass tracks device heading and landscape focuses on the dials", 
 
   await page.goto("/");
   await expect(page.getByRole("group", { name: "Tracking dials" })).toBeVisible();
-  await page.evaluate(() => {
-    const EventCtor = (window as unknown as { DeviceOrientationEvent: new (type: string, init?: { alpha?: number }) => Event }).DeviceOrientationEvent;
-    window.dispatchEvent(new EventCtor("deviceorientation", { alpha: 270 }));
-  });
-  await expect(page.getByText("Phone 90°", { exact: true })).toBeVisible();
+  // Android prefers absolute readings; keep publishing until the React listener is ready.
+  await expect.poll(async () => {
+    await page.evaluate(() => {
+      const EventCtor = (window as unknown as { DeviceOrientationEvent: new (type: string, init?: { alpha?: number }) => Event }).DeviceOrientationEvent;
+      window.dispatchEvent(new EventCtor("deviceorientationabsolute", { alpha: 270 }));
+    });
+    return page.getByText("Phone 90°", { exact: true }).isVisible();
+  }).toBe(true);
   await expect(page.getByRole("group", { name: "Tracking dials" })).toHaveCSS("flex-direction", "row");
   // Landscape keeps the dials side by side; the page scrolls, so the aircraft list is below the fold rather than hidden.
   const listHeading = page.getByText(/aircraft · sorted by score · tap to track/i);
