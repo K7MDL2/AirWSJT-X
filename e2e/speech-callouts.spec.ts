@@ -99,22 +99,22 @@ test.describe("Speech callouts — rotator panel", () => {
     await expect(page.getByRole("button", { name: /Speech on/i })).toBeVisible();
   });
 
-  test("hovering the speech button previews azimuth and elevation when speech is on", async ({ page }) => {
+  test("hovering the speech button does not announce position while the rotor is off", async ({ page }) => {
     await page.goto("/");
     const toggle = page.getByRole("button", { name: /Speech on/i });
     await toggle.hover();
-    await expect.poll(async () =>
-      page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
-    ).toBe("Azimuth 0, Elevation 0");
+    await page.waitForTimeout(500);
+    const calls = await page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls);
+    expect(calls).toEqual([]);
   });
 
-  test("manual mode announces target azimuth and elevation", async ({ page }) => {
+  test("manual compass click announces rotor off when the rotor is not connected", async ({ page }) => {
     await page.goto("/");
     await page.getByRole("button", { name: "Manual", exact: true }).click();
-    await page.locator("svg").first().click({ position: { x: 85, y: 10 } });
+    await page.locator('svg[width="170"][height="170"]').first().click({ position: { x: 85, y: 10 } });
     await expect.poll(async () =>
       page.evaluate(() => (window as unknown as { __speechCalls: string[] }).__speechCalls[0] ?? "")
-    ).toMatch(/^Azimuth \d+, Elevation 0$/);
+    ).toBe("Rotor off");
   });
 
   test("manual mode ignores locked aircraft updates", async ({ page }) => {

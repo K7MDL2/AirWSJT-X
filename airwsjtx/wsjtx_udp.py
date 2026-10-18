@@ -121,6 +121,45 @@ class WSJTXDecode:
 
 
 @dataclass
+class WSJTXQsoLogged:
+    app_id: str
+    dx_call: str | None
+    dx_grid: str | None
+    freq_hz: int
+    mode: str | None
+    report_sent: str | None
+    report_rcvd: str | None
+
+
+def _skip_qdatetime(d: bytes, o: int) -> int:
+    _, o = _u64(d, o)  # julian day
+    _, o = _u32(d, o)  # ms since midnight
+    spec, o = _u8(d, o)
+    if spec == 2:  # offset from UTC carries a seconds offset
+        _, o = _i32(d, o)
+    return o
+
+
+def parse_qso_logged(d: bytes) -> WSJTXQsoLogged | None:
+    try:
+        magic, schema, msg_type, app_id, o = _parse_header(d)
+        if magic != WSJTX_MAGIC or msg_type != MSG_QSO_LOGGED:
+            return None
+        o = _skip_qdatetime(d, o)
+        dx_call, o = _str(d, o)
+        dx_grid, o = _str(d, o)
+        freq_hz, o = _u64(d, o)
+        mode, o = _str(d, o)
+        rst_sent, o = _str(d, o)
+        rst_rcvd, o = _str(d, o)
+        return WSJTXQsoLogged(app_id=app_id or "", dx_call=dx_call, dx_grid=dx_grid,
+                              freq_hz=freq_hz, mode=mode, report_sent=rst_sent,
+                              report_rcvd=rst_rcvd)
+    except Exception:
+        return None
+
+
+@dataclass
 class WSJTXHeartbeat:
     app_id: str
     max_schema: int
@@ -268,6 +307,7 @@ class WSJTXListener:
         client_id: str = "AirWSJTX",
         on_status: Callable[[WSJTXStatus], None] | None = None,
         on_decode: Callable[[WSJTXDecode], None] | None = None,
+        on_qso_logged: Callable[[WSJTXQsoLogged], None] | None = None,
         on_connected: Callable[[str], None] | None = None,
         on_disconnected: Callable[[], None] | None = None,
         heartbeat_timeout_s: float = 30.0,
@@ -281,6 +321,7 @@ class WSJTXListener:
         self.client_id = client_id
         self.on_status = on_status
         self.on_decode = on_decode
+        self.on_qso_logged = on_qso_logged
         self.on_connected = on_connected
         self.on_disconnected = on_disconnected
         self.heartbeat_timeout_s = heartbeat_timeout_s
@@ -472,6 +513,16 @@ class WSJTXListener:
                 self._mark_connected(dec.app_id)
                 if self.on_decode:
                     self.on_decode(dec)
+                return True
+        elif msg_type == MSG_QSO_LOGGED:
+            qso = parse_qso_logged(data)
+            if qso:
+                self._remember_rig(qso.app_id)
+            if qso and self._matches_source(qso.app_id):
+                self._last_packet = time.monotonic()
+                self._mark_connected(qso.app_id)
+                if self.on_qso_logged:
+                    self.on_qso_logged(qso)
                 return True
         elif msg_type == MSG_CLOSE and self._matches_source(app_id or ""):
             self._mark_disconnected()

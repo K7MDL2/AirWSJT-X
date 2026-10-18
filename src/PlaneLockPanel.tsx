@@ -103,41 +103,43 @@ export default function PlaneLockPanel({
 
   // State machine progression steps
   const steps = ["idle", "plane_locked", "tracking", "ready", "active_qso"];
-  const stepIdx = steps.indexOf(sessionState);
+  // Pre-lock and finished states all show the first step
+  const stepIdx = Math.max(0, steps.indexOf(sessionState));
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
 
       {/* State machine progress bar */}
-      <div style={{ display: "flex", alignItems: "center", gap: 0 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 0, padding: "0 20px", marginBottom: 14 }}>
         {["Idle", "Locked", "Tracking", "Ready", "QSO"].map((label, i) => {
           const active = i <= stepIdx;
           const current = i === stepIdx;
           return (
-            <div key={label} style={{ display: "flex", alignItems: "center", flex: 1 }}>
+            <div key={label} style={{ display: "flex", alignItems: "center", flex: i === 0 ? "0 0 8px" : 1 }}>
+              {i > 0 && (
+                <div style={{
+                  flex: 1, height: 4,
+                  background: active ? stateInfo.color : "#30363d",
+                  transition: "background 0.3s",
+                }} />
+              )}
               <div style={{
-                flex: 1, height: 4,
-                background: i === 0 ? "transparent" : active ? stateInfo.color : "#30363d",
-                transition: "background 0.3s",
-              }} />
-              <div style={{
+                position: "relative", flexShrink: 0,
                 width: 8, height: 8, borderRadius: "50%",
                 background: active ? stateInfo.color : "#30363d",
                 outline: current ? `2px solid ${stateInfo.color}` : "none",
                 outlineOffset: 2,
-                transition: "all 0.3s",
-              }} />
-              <div style={{
-                fontSize: 9, color: active ? stateInfo.color : "#8b949e",
-                position: "absolute", marginTop: 16, textAlign: "center",
-                width: 40, marginLeft: -16,
-              }}>{label}</div>
+                transition: "background 0.3s",
+              }}>
+                <span style={{
+                  position: "absolute", top: 14, left: "50%", transform: "translateX(-50%)",
+                  fontSize: 9, whiteSpace: "nowrap", color: active ? stateInfo.color : "#8b949e",
+                }}>{label}</span>
+              </div>
             </div>
           );
         })}
       </div>
-
-      <div style={{ height: 8 }} />
 
       {/* Auto-lock toggle */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

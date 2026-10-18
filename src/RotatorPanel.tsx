@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { isSpeechSupported, speak } from "./lib/speech";
+import { useEffect, useState } from "react";
+import { isSpeechSupported } from "./lib/speech";
 
 interface RotatorPanelProps {
   currentAz: number;
@@ -23,6 +23,8 @@ interface RotatorPanelProps {
   onPark: () => void;
   onSync?: (az: number, el: number) => void;
   syncDisabled?: boolean;
+  clicksBlocked?: boolean;
+  onBlockedClick?: () => void;
   onConnect: (host: string, port: number) => void;
 }
 
@@ -340,14 +342,13 @@ export default function RotatorPanel({
   onSpeechEnabledChange,
   onSpeechThresholdDegChange,
   onSpeechIntervalSecChange,
-  mode = "rotator", aircraftLabel = null, targetLabel = null,
-  onSetPosition, onStop, onPark, onConnect, onSync, syncDisabled = false,
+  mode = "rotator",
+  onSetPosition, onStop, onPark, onConnect, onSync, syncDisabled = false, clicksBlocked = false, onBlockedClick,
 }: RotatorPanelProps) {
   const [manualAz, setManualAz] = useState(currentAz.toFixed(1));
   const [manualEl, setManualEl] = useState(currentEl.toFixed(1));
   const [host, setHost] = useState(() => localStorage.getItem("rotatorHost") || "127.0.0.1");
   const [port, setPort] = useState(() => localStorage.getItem("rotatorPort") || "4533");
-  const lastSpeechPreviewAtRef = useRef(0);
 
   // Sync manual fields when target changes
   useEffect(() => {
@@ -358,6 +359,7 @@ export default function RotatorPanel({
   }, [targetEl]);
 
   function handleCompassClick(az: number) {
+    if (mode === "manual" && clicksBlocked) { onBlockedClick?.(); return; }
     const wrapped = wrapAz(az);
     setManualAz(wrapped.toFixed(1));
     if (mode === "manual") {
@@ -365,6 +367,7 @@ export default function RotatorPanel({
     }
   }
   function handleElevationClick(el: number) {
+    if (mode === "manual" && clicksBlocked) { onBlockedClick?.(); return; }
     const clamped = clampElInput(el);
     setManualEl(clamped.toFixed(1));
     if (mode === "manual") {
@@ -398,116 +401,37 @@ export default function RotatorPanel({
   const displayEl = targetEl ?? currentEl;
   const speechSupported = isSpeechSupported();
 
-  function handleSpeechPreview() {
-    if (!speechSupported || !speechEnabled) return;
-    const now = Date.now();
-    if (now - lastSpeechPreviewAtRef.current < 1200) return;
-    lastSpeechPreviewAtRef.current = now;
-    speak(`Azimuth ${Math.round(displayAz)}, Elevation ${Math.round(displayEl)}`);
-  }
-
-  const speechToggleTitle = speechSupported
-    ? "Toggle speech callouts. Hover to preview the current azimuth and elevation."
-    : "Web Speech API not available on this platform";
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
 
       {/* Connection bar */}
-      {!isManualMode && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "3px 10px", borderRadius: 6, fontSize: 12,
-            background: connected ? "rgba(63,185,80,0.12)" : "rgba(248,81,73,0.12)",
-            border: `1px solid ${connected ? "#3fb950" : "#f85149"}`,
-            color: connected ? "#3fb950" : "#f85149", fontWeight: 600,
-          }}>
-            <span style={{ fontSize: 8 }}>{connected ? "●" : "○"}</span>
-            {connected ? "rotctld connected" : "rotctld offline"}
-          </div>
-          <button
-            type="button"
-            className="btn-secondary"
-            style={{
-              ...smBtn,
-              border: speechEnabled ? "1px solid #3fb950" : "1px solid #30363d",
-              background: speechEnabled ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.02)",
-              color: speechSupported ? (speechEnabled ? "#3fb950" : "#c9d1d9") : "#8b949e",
-            }}
-            aria-pressed={speechEnabled}
-            disabled={!speechSupported}
-            onClick={() => onSpeechEnabledChange(!speechEnabled)}
-            onMouseEnter={handleSpeechPreview}
-            onFocus={handleSpeechPreview}
-            title={speechToggleTitle}
-          >
-            {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
-          </button>
-          {!connected && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
-              <input value={host} onChange={e => setHost(e.target.value)}
-                placeholder="host" style={{ ...inputStyle, width: 110 }} />
-              <input value={port} inputMode="numeric" maxLength={5}
-                onChange={e => setPort(e.target.value.replace(/\D/g, "").slice(0, 5))}
-                placeholder="port" style={{ ...inputStyle, width: 60 }} />
-              <button className="btn-secondary" style={smBtn}
-                onClick={() => {
-                  localStorage.setItem("rotatorHost", host);
-                  localStorage.setItem("rotatorPort", port);
-                  onConnect(host, parseInt(port) || 4533);
-                }}>
-                Connect
-              </button>
-            </div>
-          )}
-        </div>
-      )}
-      {isManualMode && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "3px 10px", borderRadius: 6, fontSize: 12,
-            background: "rgba(88,166,255,0.12)",
-            border: "1px solid #58a6ff44",
-            color: "#58a6ff", fontWeight: 600,
-          }}>
-            <span style={{ fontSize: 8 }}>●</span>
-            Manual pointing mode
-          </div>
-          <button
-            type="button"
-            className="btn-secondary"
-            style={{
-              ...smBtn,
-              border: speechEnabled ? "1px solid #3fb950" : "1px solid #30363d",
-              background: speechEnabled ? "rgba(63,185,80,0.12)" : "rgba(255,255,255,0.02)",
-              color: speechSupported ? (speechEnabled ? "#3fb950" : "#c9d1d9") : "#8b949e",
-            }}
-            aria-pressed={speechEnabled}
-            disabled={!speechSupported}
-            onClick={() => onSpeechEnabledChange(!speechEnabled)}
-            onMouseEnter={handleSpeechPreview}
-            onFocus={handleSpeechPreview}
-            title={speechToggleTitle}
-          >
-            {speechEnabled ? "🔊 Speech on" : "🔈 Speech off"}
+      {!connected && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
+          <input value={host} onChange={e => setHost(e.target.value)}
+            placeholder="host" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+          <input value={port} inputMode="numeric" maxLength={5}
+            onChange={e => setPort(e.target.value.replace(/\D/g, "").slice(0, 5))}
+            placeholder="port" style={{ ...inputStyle, width: 60, flexShrink: 0 }} />
+          <button className="btn-secondary" style={{ ...smBtn, flexShrink: 0 }}
+            onClick={() => {
+              localStorage.setItem("rotatorHost", host);
+              localStorage.setItem("rotatorPort", port);
+              onConnect(host, parseInt(port) || 4533);
+            }}>
+            Connect
           </button>
         </div>
       )}
 
       <div style={{
         display: "grid",
+        gridTemplateColumns: "minmax(0, 1fr)",
         gap: 2,
         padding: "5px 10px",
         background: isManualMode ? "rgba(88,166,255,0.08)" : "rgba(255,255,255,0.02)",
         borderRadius: 6,
         border: isManualMode ? "1px solid #58a6ff44" : "1px solid #30363d",
       }}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <span style={{ fontSize: 10, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>Pointing</span>
-          <span style={{ fontSize: 12, fontWeight: 700, color: "#c9d1d9", fontFamily: "monospace" }}>{aircraftLabel || targetLabel || "Rotator"}</span>
-        </div>
         <div style={{
           display: "flex",
           alignItems: "baseline",
@@ -531,8 +455,8 @@ export default function RotatorPanel({
             <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>Azimuth</div>
             <CompassRose current={currentAz} target={targetAz} size={compassSize} dxAz={dxAz} dxLabel={dxLabel} onClick={handleCompassClick} />
           </div>
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-            <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>Elevation</div>
+          <div style={{ position: "relative", width: elevWidth, alignSelf: "center", marginTop: 14 }}>
+            <div style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em", pointerEvents: "none" }}>Elevation</div>
             <ElevationArc current={currentEl} target={targetEl} width={elevWidth} height={elevHeight} onClick={handleElevationClick} />
           </div>
         </div>
@@ -553,8 +477,8 @@ export default function RotatorPanel({
             </div>
 
             {/* Elevation arc */}
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-              <div style={{ fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            <div style={{ position: "relative", width: elevWidth, alignSelf: "center", marginTop: 14 }}>
+              <div style={{ position: "absolute", right: 0, top: "50%", transform: "translateY(-50%)", fontSize: 11, color: "#8b949e", textTransform: "uppercase", letterSpacing: "0.08em", pointerEvents: "none" }}>
                 Elevation
               </div>
               <ElevationArc current={currentEl} target={targetEl} width={elevWidth} height={elevHeight}

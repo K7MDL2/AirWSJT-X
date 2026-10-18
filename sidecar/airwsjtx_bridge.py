@@ -32,7 +32,7 @@ from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.supervisor import AirWSJTXSupervisor
 from airwsjtx.tracking import build_track, select_best_aircraft
-from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXStatus
+from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXQsoLogged, WSJTXStatus
 
 supervisor = AirWSJTXSupervisor()
 _stdout_lock = threading.Lock()
@@ -394,6 +394,10 @@ def handle(msg: dict) -> None:
             })
 
         elif method == "start_qso":
+            from airwsjtx.state_machine import SessionState
+            # After an abort or completed QSO the session is terminal; re-arm it for the still-locked plane
+            if supervisor.session.state in (SessionState.ABORTED, SessionState.COMPLETED) and _locked_aircraft_id:
+                _do_lock(_locked_aircraft_id)
             supervisor.operator_start_qso()
             _ok(id_, {"state": supervisor.session.state.value})
 
@@ -1483,6 +1487,31 @@ def _on_wsjtx_decode(dec: WSJTXDecode) -> None:
     })
 
 
+def _on_wsjtx_qso_logged(qso: WSJTXQsoLogged) -> None:
+    from airwsjtx.state_machine import SessionState
+    # WSJT-X is the authority on a finished QSO; close the app session to match
+    completed = False
+    if supervisor.session.state == SessionState.ACTIVE_QSO:
+        try:
+            supervisor.finish_qso(abort=False)
+            completed = True
+        except Exception:
+            pass
+    _emit({
+        "event": "qso_logged",
+        "data": {
+            "dx_call": qso.dx_call,
+            "dx_grid": qso.dx_grid,
+            "freq_hz": qso.freq_hz,
+            "mode": qso.mode,
+            "report_sent": qso.report_sent,
+            "report_rcvd": qso.report_rcvd,
+            "state": supervisor.session.state.value,
+            "session_completed": completed,
+        },
+    })
+
+
 def _on_wsjtx_connected(app_id: str) -> None:
     _emit({"event": "wsjtx_connected", "data": {"app_id": app_id}})
 
@@ -1501,6 +1530,7 @@ def main() -> None:
     listener = WSJTXListener(
         on_status=_on_wsjtx_status,
         on_decode=_on_wsjtx_decode,
+        on_qso_logged=_on_wsjtx_qso_logged,
         on_connected=_on_wsjtx_connected,
         on_disconnected=_on_wsjtx_disconnected,
         on_error=_on_wsjtx_error,

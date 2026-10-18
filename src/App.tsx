@@ -381,6 +381,10 @@ export default function App() {
               tx_df: evtData.tx_df as number | null,
               config_name: evtData.config_name as string | null,
             }));
+          } else if (evt === "qso_logged") {
+            const q = evtData as { dx_call?: string | null; mode?: string | null; report_sent?: string | null; report_rcvd?: string | null; state?: string; session_completed?: boolean };
+            addLog(`WSJT-X logged QSO with ${q.dx_call ?? "?"}${q.mode ? ` (${q.mode})` : ""} ${q.report_sent ?? ""}/${q.report_rcvd ?? ""}${q.session_completed ? " — session completed" : ""}`.replace(/\s+/g, " ").trim());
+            if (q.state) setStatus((s) => s ? { ...s, state: q.state as string } : s);
           } else if (evt === "wsjtx_decode") {
             const entry: WsjtxDecodeEntry = {
               message: evtData.message as string | null,
@@ -550,7 +554,9 @@ export default function App() {
         : null
     );
 
-  const rotatorSpeechSource = uiMode === "manual"
+  const rotatorSpeechSource = !(rotatorControlEnabled && rotatorConnected)
+    ? null
+    : uiMode === "manual"
     ? (
       manualSpeechTarget
         ? { ...manualSpeechTarget, source: "manual" as const, announceFirstUpdate: true }
@@ -613,7 +619,7 @@ export default function App() {
     try {
       const r = await rpc("start_qso") as { state: string };
       setStatus((s) => s ? { ...s, state: r.state } : s);
-      addLog("QSO started — PTT ON");
+      addLog("QSO marked started (enable Tx in WSJT-X to transmit)");
     } catch (e) { addLog(`Error: ${e}`); }
   }
 
@@ -621,7 +627,7 @@ export default function App() {
     try {
       const r = await rpc("finish_qso", { abort }) as { state: string };
       setStatus((s) => s ? { ...s, state: r.state } : s);
-      addLog(abort ? "QSO aborted — PTT OFF" : "QSO completed — PTT OFF");
+      addLog(abort ? "QSO marked aborted (use Halt Tx in WSJT-X to stop transmitting)" : "QSO marked complete (WSJT-X logs the contact itself)");
     } catch (e) { addLog(`Error: ${e}`); }
   }
 
@@ -641,7 +647,19 @@ export default function App() {
   }
 
   const state = status?.state ?? "idle";
-  const stateColor = STATE_COLOR[state] ?? "#8b949e";
+  // Timeline state derived from live data: the backend only advances to ready/tracking via a flight-track path the UI never drives
+  const READY_TOLERANCE_DEG = 3;
+  const displayState = (() => {
+    if (state === "active_qso") return "active_qso";
+    if (!lockedPlane) return "idle";
+    if (wsjtxLive.transmitting) return "active_qso";
+    if (!(rotatorControlEnabled && rotatorConnected && uiMode !== "manual")) return "plane_locked";
+    const azErr = Math.abs(((rotatorAz - lockedPlane.az_a + 540) % 360) - 180);
+    const elErr = Math.abs(rotatorEl - lockedPlane.el_a);
+    return Number.isFinite(azErr) && Number.isFinite(elErr) && Math.max(azErr, elErr) <= READY_TOLERANCE_DEG
+      ? "ready" : "tracking";
+  })();
+  const stateColor = STATE_COLOR[displayState] ?? "#8b949e";
   const aircraft = airscout?.aircraft ?? [];
   const txOffsetTitle = wsjtxLive.tx_df != null ? `TX frequency offset: ${wsjtxLive.tx_df}Hz.` : null;
   const txOffset = txOffsetTitle ? ` ${txOffsetTitle}` : "";
@@ -653,6 +671,7 @@ export default function App() {
     wsjtxLive.tr_period === 15 &&
     (wsjtxLive.freq_mhz == null || wsjtxLive.freq_mhz >= 1240);
   const canStartQso = wsjtxReady && (
+    displayState === "ready" ||
     state === "ready" ||
     (!autoLock && !!lockedPlane && (state === "plane_locked" || state === "tracking"))
   );
@@ -831,6 +850,17 @@ export default function App() {
   const currentAz = lockedPlane && uiMode !== "manual" ? (Number.isFinite(lockedPlane.az_a) ? lockedPlane.az_a : rotatorAz) : rotatorAz;
   const currentEl = lockedPlane && uiMode !== "manual" ? (Number.isFinite(lockedPlane.el_a) ? lockedPlane.el_a : rotatorEl) : rotatorEl;
   const portableFontPx = Math.max(PORTABLE_MIN_FONT_PX, PORTABLE_BASE_FONT_PX * portableScale / 100);
+  const rotorOn = rotatorControlEnabled && rotatorConnected;
+  const lastSpeechPreviewAt = useRef(0);
+  function previewSpeech() {
+    if (!isSpeechSupported() || !rotatorSpeechEnabled || !rotorOn) return;
+    const now = Date.now();
+    if (now - lastSpeechPreviewAt.current < 1200) return;
+    lastSpeechPreviewAt.current = now;
+    const az = lockedPlane && uiMode !== "manual" ? lockedPlane.az_a : rotatorTargetAz ?? rotatorAz;
+    const el = lockedPlane && uiMode !== "manual" ? lockedPlane.el_a : rotatorTargetEl ?? rotatorEl;
+    speak(`Azimuth ${Math.round(az)}, Elevation ${Math.round(el)}`);
+  }
   const portableReadout = (
   <div className={portableView === "overlay" ? "portable-overlay" : "portable-panel"}>
     <div className="portable-header">
@@ -859,7 +889,7 @@ export default function App() {
       <header className="topbar">
         <h1>AirWSJT-X</h1>
         <span className="badge" style={{ background: stateColor + "22", color: stateColor }}>
-          {state.replace(/_/g, " ")}
+          {displayState.replace(/_/g, " ")}
         </span>
         {wsjtxLive.transmitting && (
           <span className="badge" style={{ background: "#f8514922", color: "#f85149" }}>PTT</span>
@@ -976,10 +1006,10 @@ export default function App() {
       <div className="content">
 
         {/* LEFT: Stations + Plane Lock */}
-        <div className="col">
+        <div className="col" style={{ overflowY: "auto" }}>
 
           {/* Compact station cards */}
-          <div className="card">
+          <div className="card" style={{ flexShrink: 0 }}>
             <h3>Stations</h3>
             <div className="station-compact">
               <div className="station-pill" style={{ borderColor: "#58a6ff44" }}>
@@ -1198,13 +1228,13 @@ export default function App() {
           </div>
 
           {/* Plane Lock */}
-          <div className="card plane-lock-card" style={{ flex: "0 1 auto", overflowY: "auto" }}>
+          <div className="card plane-lock-card" style={{ flex: "0 0 auto", overflowY: "visible" }}>
             <PlaneLockPanel
               locked={lockedPlane}
               nowEpochS={nowEpochS}
               pollIntervalS={activePollIntervalS}
               autoLock={autoLock}
-              sessionState={state}
+              sessionState={displayState}
               onAutoLockToggle={(v) => {
                 setAutoLock(v);
                 rpc("auto_lock_set", { enabled: v }).catch(() => {});
@@ -1224,20 +1254,23 @@ export default function App() {
         {/* CENTRE: Rotator */}
         <div className="col" style={{ alignItems: "center", justifyContent: "flex-start", overflowY: "auto" }}>
           <div className="card" style={{ width: "100%", alignSelf: "stretch", flexShrink: 0 }}>
-            <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 8, marginBottom: 8 }}>
+            <div style={{ display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 6, flexWrap: "nowrap", marginBottom: 8 }}>
               <button
                 type="button"
                 className="btn-secondary"
                 title={rotatorControlEnabled
-                  ? "rotctld control is on. Click to block all rotator movement commands."
-                  : "rotctld control is off: no movement commands are sent. Click to re-enable."}
+                  ? (rotatorConnected
+                    ? "Rotor control is on. Click to block all rotator movement commands."
+                    : "Rotor control is on but rotctld is not connected. Click to block all rotator movement commands.")
+                  : "Rotor control is off: no movement commands are sent. Click to re-enable."}
                 aria-pressed={!rotatorControlEnabled}
                 style={{
                   fontSize: 10,
                   padding: "4px 10px",
-                  border: rotatorControlEnabled ? "1px solid var(--border)" : "1px solid var(--red)",
-                  background: rotatorControlEnabled ? "var(--surface)" : "rgba(248,81,73,0.15)",
-                  color: rotatorControlEnabled ? "var(--text-muted)" : "var(--red)",
+                  whiteSpace: "nowrap",
+                  border: rotorOn ? "1px solid var(--green)" : "1px solid var(--red)",
+                  background: rotorOn ? "rgba(63,185,80,0.25)" : "rgba(248,81,73,0.25)",
+                  color: rotorOn ? "var(--green)" : "var(--red)",
                 }}
                 onClick={() => {
                   const next = !rotatorControlEnabled;
@@ -1254,8 +1287,9 @@ export default function App() {
                     .catch(e => addLog(`Rotator: ${e}`));
                 }}
               >
-                {rotatorControlEnabled ? "rotctld control: On" : "rotctld control: OFF"}
+                {rotorOn ? "Rotor: ON" : "Rotor: OFF"}
               </button>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{ display: "inline-flex", padding: 3, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", gap: 4 }}>
                 {(["rotator", "manual"] as const).map((mode) => (
                   <button
@@ -1274,6 +1308,33 @@ export default function App() {
                     {mode === "rotator" ? "Auto" : "Manual"}
                   </button>
                 ))}
+              </div>
+              <button
+                type="button"
+                className="btn-secondary"
+                aria-label={rotatorSpeechEnabled ? "Speech on" : "Speech off"}
+                aria-pressed={rotatorSpeechEnabled}
+                disabled={!isSpeechSupported()}
+                title={isSpeechSupported()
+                  ? `Speech callouts ${rotatorSpeechEnabled ? "on" : "off"}. Hover to preview the current azimuth and elevation.`
+                  : "Web Speech API not available on this platform"}
+                style={{
+                  padding: "4px 7px",
+                  lineHeight: 0,
+                  border: rotatorSpeechEnabled ? "1px solid var(--green)" : "1px solid var(--border)",
+                  background: rotatorSpeechEnabled ? "rgba(63,185,80,0.25)" : "#000",
+                  color: rotatorSpeechEnabled ? "var(--green)" : "var(--text-muted)",
+                }}
+                onClick={() => setRotatorSpeechEnabled(!rotatorSpeechEnabled)}
+                onMouseEnter={previewSpeech}
+                onFocus={previewSpeech}
+              >
+                <svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M1 5h2.5L7 2v10L3.5 9H1z" fill="currentColor" />
+                  <path d="M10 4.5a3.5 3.5 0 0 1 0 5" />
+                  <path d="M12.5 2.5a6.5 6.5 0 0 1 0 9" />
+                </svg>
+              </button>
               </div>
             </div>
             <RotatorPanel
@@ -1304,6 +1365,11 @@ export default function App() {
               onConnect={(host, port) => rpc("rotator_connect", { host, port }).catch(e => addLog(`Rotator: ${e}`))}
               onSync={(az, el) => { setRotatorTargetAz(az); setRotatorTargetEl(el); }}
               syncDisabled={uiMode !== "manual" && rotatorControlEnabled}
+              clicksBlocked={!rotorOn}
+              onBlockedClick={() => {
+                addLog("Rotor off: compass click ignored");
+                if (rotatorSpeechEnabled && isSpeechSupported()) speak("Rotor off");
+              }}
             />
           </div>
         </div>
@@ -1537,18 +1603,30 @@ export default function App() {
       {/* ── Bottom action bar ── */}
       <footer className="bottombar">
         <button className="btn-secondary" style={{ fontSize: 12 }} onClick={async () => {
-          addLog("Session ready — waiting for aircraft lock");
+          if (lockedPlane) {
+            try {
+              await rpc("lock_aircraft", { icao24: lockedPlane.icao24 });
+              addLog(`Session ready — aircraft ${lockedPlane.callsign || lockedPlane.icao24} locked`);
+            } catch (e) {
+              addLog(`Begin Session: ${e}`);
+            }
+          } else {
+            addLog("Session ready — waiting for aircraft lock");
+          }
         }} disabled={state !== "idle" && state !== "completed" && state !== "aborted"}>
           Begin Session
         </button>
-        <button className="btn-success" onClick={startQso} disabled={!canStartQso}>
+        <button className="btn-success" onClick={startQso} disabled={!canStartQso}
+          title="Mark the QSO as started in the app. This does not transmit; enable Tx in WSJT-X.">
           ▶ Start QSO
         </button>
         <button className="btn-danger" onClick={() => finishQso(true)}
-          disabled={["idle", "completed", "aborted"].includes(state)}>
+          title="Mark the QSO as aborted in the app. Use Halt Tx in WSJT-X to stop transmitting."
+          disabled={displayState !== "active_qso" && ["idle", "completed", "aborted"].includes(state)}>
           ■ Abort
         </button>
-        <button className="btn-secondary" onClick={() => finishQso(false)} disabled={state !== "active_qso"}>
+        <button className="btn-secondary" onClick={() => finishQso(false)} disabled={state !== "active_qso"}
+          title="Mark the QSO as done in the app. WSJT-X also completes it automatically when it logs the contact.">
           ✓ Finish QSO
         </button>
         <div style={{ width: 1, height: 20, background: "var(--border)", margin: "0 4px" }} />
