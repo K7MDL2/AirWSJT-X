@@ -112,6 +112,11 @@ class WindowsWorkflowTests(unittest.TestCase):
             with self.subTest(required=required):
                 self.assertIn(required, workflow)
         self.assertNotIn("continue-on-error", workflow)
+        self.assertLess(
+            workflow.index("- name: Run Python tests on ARM64"),
+            workflow.index("- name: Sync release version"),
+            "Platform metadata tests require the checked-in stable version, not a prerelease tag.",
+        )
         config = json.loads((ROOT / "src-tauri" / "tauri.windows-arm64.conf.json").read_text(encoding="utf-8"))
         self.assertEqual(config["bundle"]["targets"], ["nsis"])
         self.assertEqual(config["build"]["beforeBuildCommand"], "npm run build")
