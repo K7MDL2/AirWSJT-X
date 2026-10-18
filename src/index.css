@@ -19,6 +19,14 @@ select { background: #000; color: #e6edf3; color-scheme: dark; border: 1px solid
 select option { background: #000; color: #e6edf3; }
 input[type="number"] { color-scheme: dark; }
 
+/* Themed scrollbars (standard properties for Firefox/Chromium 121+, WebKit pseudo-elements for older WebViews) */
+* { scrollbar-width: thin; scrollbar-color: #30363d var(--bg); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--bg); }
+*::-webkit-scrollbar-thumb { background: #30363d; border-radius: 5px; border: 2px solid var(--bg); }
+*::-webkit-scrollbar-thumb:hover { background: #484f58; }
+*::-webkit-scrollbar-corner { background: var(--bg); }
+
 .aircraft-accounts { font-size: 11px; }
 .aircraft-accounts summary { cursor: pointer; padding: 4px 0; }
 .account-fields { display: grid; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 4px; }
