@@ -7,6 +7,7 @@ import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
 import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
 import { bearingDeg, haversineKm, isValidLocator, locatorToLatlon } from "./lib/geo";
+import SkyDome from "./SkyDome";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -245,6 +246,7 @@ export default function App() {
     const value = Number(raw);
     return Number.isFinite(value) && value >= 0 ? value : 2;
   });
+  const [showSkyDome, setShowSkyDome] = useState(() => localStorage.getItem("airwsjtx.showSkyDome") === "true");
   const [dxCallsign, setDxCallsign] = useState<string | null>(null);
   const [dxGrid, setDxGrid] = useState<string | null>(null);
   const [stationGridOverrides, setStationGridOverrides] = useState<Record<string, string>>(() => {
@@ -886,7 +888,7 @@ export default function App() {
   const portableDisplay = portableView === "hidden" ? null : portableReadout;
 
   return (
-    <div className={`app${portableView === "panel" ? " has-portable-panel" : ""}`}>
+    <div className={`app${portableView === "panel" || showSkyDome ? " has-display-panels" : ""}`}>
       {portableView === "overlay" && portableDisplay}
 
       {/* ── Top bar ── */}
@@ -983,28 +985,89 @@ export default function App() {
         </div>
       </header>
 
-      <div className="portable-toolbar" role="group" aria-label="Az / El display controls">
-        <span>Az / El</span>
-        <div className="portable-controls">
-          <button className="portable-mode" aria-pressed={portableView === "panel"} onClick={() => setPortableView("panel")}>Panel</button>
-          <button className="portable-mode" aria-pressed={portableView === "overlay"} onClick={() => setPortableView("overlay")}>Overlay</button>
-          <button className="portable-mode" aria-pressed={portableView === "hidden"} onClick={() => setPortableView("hidden")}>Hide</button>
+      <div className="display-toolbar">
+        <div className="portable-toolbar" role="group" aria-label="Az / El display controls">
+          <span>Az / El</span>
+          <div className="portable-controls">
+            <button className="portable-mode" aria-pressed={portableView === "panel"} onClick={() => setPortableView("panel")}>Panel</button>
+            <button className="portable-mode" aria-pressed={portableView === "overlay"} onClick={() => setPortableView("overlay")}>Overlay</button>
+            <button className="portable-mode" aria-pressed={portableView === "hidden"} onClick={() => setPortableView("hidden")}>Hide</button>
+          </div>
+          <label>
+            Scale
+            <input
+              type="range"
+              min={70}
+              max={180}
+              step={5}
+              value={portableScale}
+              onChange={(e) => setPortableScale(Number(e.target.value))}
+            />
+            <span>{portableScale}%</span>
+          </label>
         </div>
-        <label>
-          Scale
-          <input
-            type="range"
-            min={70}
-            max={180}
-            step={5}
-            value={portableScale}
-            onChange={(e) => setPortableScale(Number(e.target.value))}
-          />
-          <span>{portableScale}%</span>
-        </label>
+
+        <div className="portable-toolbar" role="group" aria-label="Sky Dome display controls">
+          <span>Sky Dome</span>
+          <div className="portable-controls">
+            <button
+              className="portable-mode"
+              aria-pressed={showSkyDome}
+              aria-controls="skydome-panel"
+              onClick={() => {
+                setShowSkyDome(true);
+                localStorage.setItem("airwsjtx.showSkyDome", "true");
+              }}
+            >Show</button>
+            <button
+              className="portable-mode"
+              aria-pressed={!showSkyDome}
+              aria-controls="skydome-panel"
+              onClick={() => {
+                setShowSkyDome(false);
+                localStorage.setItem("airwsjtx.showSkyDome", "false");
+              }}
+            >Hide</button>
+          </div>
+        </div>
       </div>
 
-      {portableView === "panel" && portableDisplay}
+      {(portableView === "panel" || showSkyDome) && (
+        <div className={`display-panels${showSkyDome ? " has-skydome" : ""}`}>
+          {portableView === "panel" && portableDisplay}
+          {showSkyDome && (
+            <section className="skydome-panel" id="skydome-panel" aria-label="Sky Dome">
+              <h3 className="portable-header">Sky Dome</h3>
+              <SkyDome
+                aircraft={aircraft.slice(0, 20).map(ac => ({
+                  icao24: ac.icao24,
+                  callsign: ac.callsign,
+                  az_a: ac.az_a,
+                  el_a: ac.el_a,
+                  scatter_score: ac.scatter_score,
+                  heading_deg: ac.heading_deg,
+                  velocity_kts: ac.velocity_kts,
+                  altitude_ft: ac.altitude_ft,
+                  range_a_km: ac.range_a_km,
+                  off_path_deg: ac.off_path_deg,
+                  locked: lockedPlane?.icao24 === ac.icao24,
+                }))}
+                rotatorAz={rotatorAz}
+                rotatorEl={rotatorEl}
+                targetAz={lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
+                targetEl={lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
+                pathBearing={dxBearing}
+                onClickAircraft={(icao24) => rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`))}
+                onClickSky={(az, el) => {
+                  setRotatorTargetAz(az);
+                  setRotatorTargetEl(el);
+                  rpc("rotator_set", { azimuth: az, elevation: el }).catch(e => addLog(`Rotator: ${e}`));
+                }}
+              />
+            </section>
+          )}
+        </div>
+      )}
 
       {/* ── 3-column content ── */}
       <div className="content">

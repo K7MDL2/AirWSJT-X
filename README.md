@@ -58,6 +58,8 @@ When multiple WSJT-X instances are on the network, the **Rig** dropdown selects 
 
 The compass outer ring marks the DX station's bearing and callsign. **Auto** mode follows the locked aircraft; **Manual** mode accepts operator pointing commands instead. **Sync** in Manual mode aligns the displayed target with the reported rotator position without moving it. Turning rotor control off blocks new movement commands; **Stop** remains available to stop an existing move.
 
+**Sky Dome** is an optional, desktop-only polar view of aircraft azimuth and elevation, hidden by default. Use **Show / Hide** beside the **Az / El** display controls; the choice is remembered. It sits above the main columns, alongside the Az / El panel when visible, and scales to the window without clipping the dome. The outer edge is the horizon (0 degrees), the centre is the zenith (90 degrees), and labelled concentric rings mark 22.5, 45, and 67.5 degrees. Click an aircraft to lock it, or a point in the sky to set the rotator target.
+
 ### Mobile Mode
 
 The mobile app operates independently — enter your grid locator, select an aircraft data source (OpenSky, ADS-B Exchange, or a dump1090 receiver on your network), and aircraft in your area appear on the compass rose with azimuth, elevation, and distance. Speech callouts guide antenna pointing hands-free.
