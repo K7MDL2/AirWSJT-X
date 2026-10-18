@@ -125,5 +125,9 @@ test("mobile compass tracks device heading and landscape focuses on the dials", 
   });
   await expect(page.getByText("Phone 90°", { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Tracking dials" })).toHaveCSS("flex-direction", "row");
-  await expect(page.getByText(/aircraft · sorted by score · tap to track/i)).toHaveCount(0);
+  // Landscape keeps the dials side by side; the page scrolls, so the aircraft list is below the fold rather than hidden.
+  const listHeading = page.getByText(/aircraft · sorted by score · tap to track/i);
+  await expect(listHeading).toHaveCount(1);
+  await listHeading.scrollIntoViewIfNeeded();
+  await expect(listHeading).toBeInViewport();
 });
