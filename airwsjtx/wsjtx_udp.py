@@ -23,6 +23,7 @@ MSG_DECODE = 2
 MSG_CLEAR = 3
 MSG_QSO_LOGGED = 5
 MSG_CLOSE = 6
+MSG_HALT_TX = 8
 
 
 # ─── Parsing helpers ──────────────────────────────────────────────────────────
@@ -335,6 +336,10 @@ class WSJTXListener:
         self._rig_name_filter = self._normalize_rig_name(rig_name_filter)
         self._active_app_id: str | None = None
         self._active_query_mode = False
+        self._sock: socket.socket | None = None
+        self._query_sock: socket.socket | None = None
+        self._client_addrs: dict[str, dict[tuple, float]] = {}
+        self.client_addr_ttl_s = 10.0
         self._known_rigs: dict[str, str | None] = {}
 
     def start(self) -> None:
@@ -464,6 +469,46 @@ class WSJTXListener:
         encoded = value.encode("utf-8")
         return struct.pack(">I", len(encoded)) + encoded
 
+    def _build_command(self, msg_type: int, app_id: str, *fields: bytes) -> bytes:
+        return b"".join([
+            struct.pack(">III", WSJTX_MAGIC, 2, msg_type),
+            self._pack_str(app_id),
+            *fields,
+        ])
+
+    def _send_command(self, msg_type: int, *fields: bytes) -> bool:
+        """Send a control message back to the address(es) the active WSJT-X sends from.
+
+        WSJT-X is a UDP client bound to an ephemeral port, so commands only arrive when sent to
+        the source address of its own datagrams, not to the server port it talks to.
+        """
+        now = time.monotonic()
+        with self._state_lock:
+            app_id = self._active_app_id
+            tx_sock = self._sock if self._active_query_mode else self._query_sock
+            destinations = [
+                addr for addr, seen in self._client_addrs.get(app_id or "", {}).items()
+                if now - seen <= self.client_addr_ttl_s
+            ]
+        if not app_id or tx_sock is None or not destinations:
+            return False
+        packet = self._build_command(msg_type, app_id, *fields)
+        sent = False
+        for dest in destinations:
+            try:
+                tx_sock.sendto(packet, dest)
+                sent = True
+            except OSError:
+                pass
+        return sent
+
+    def send_halt_tx(self) -> bool:
+        """Halt Tx (type 8): stop transmitting immediately and disable Tx.
+
+        WSJT-X has no UDP command for Enable Tx, so Tx can only be started from WSJT-X itself.
+        """
+        return self._send_command(MSG_HALT_TX, struct.pack(">B", 0))
+
     def _build_heartbeat(self) -> bytes:
         return b"".join(
             [
@@ -477,7 +522,7 @@ class WSJTXListener:
             ]
         )
 
-    def _handle_datagram(self, data: bytes) -> bool:
+    def _handle_datagram(self, data: bytes, addr: tuple | None = None) -> bool:
         if len(data) < 12:
             return False
         try:
@@ -493,6 +538,10 @@ class WSJTXListener:
 
         if not is_wsjtx_app(app_id):
             return False
+
+        if addr and app_id:
+            with self._state_lock:
+                self._client_addrs.setdefault(app_id, {})[tuple(addr[:2])] = time.monotonic()
 
         if msg_type == MSG_STATUS:
             st = parse_status(data)
@@ -542,6 +591,12 @@ class WSJTXListener:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.settimeout(0.05)
             sock.bind(("127.0.0.1", 0))
+            try:
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, socket.inet_aton("127.0.0.1"))
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 1)
+                sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
+            except OSError:
+                pass
             return sock
         except OSError:
             return None
@@ -561,6 +616,8 @@ class WSJTXListener:
         query_sock: socket.socket | None = None
         if not self._active_query_mode:
             query_sock = self._make_query_socket()
+        self._sock = sock
+        self._query_sock = query_sock
 
         heartbeat = self._build_heartbeat()
         last_heartbeat = 0.0
@@ -577,8 +634,8 @@ class WSJTXListener:
                 last_heartbeat = now
 
             try:
-                data, _ = sock.recvfrom(4096)
-                self._handle_datagram(data)
+                data, src = sock.recvfrom(4096)
+                self._handle_datagram(data, src)
             except socket.timeout:
                 pass
             except OSError:
@@ -589,8 +646,8 @@ class WSJTXListener:
 
             if query_sock is not None:
                 try:
-                    q_data, _ = query_sock.recvfrom(4096)
-                    self._handle_datagram(q_data)
+                    q_data, q_src = query_sock.recvfrom(4096)
+                    self._handle_datagram(q_data, q_src)
                 except socket.timeout:
                     pass
                 except OSError:

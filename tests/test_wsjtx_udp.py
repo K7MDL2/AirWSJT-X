@@ -461,5 +461,43 @@ class WSJTXListenerSocketTests(unittest.TestCase):
             sock.close()
 
 
+class WSJTXListenerCommandTests(unittest.TestCase):
+    def _listener_with_socket(self, app_id: str | None):
+        from airwsjtx.wsjtx_udp import WSJTXListener
+        listener = WSJTXListener(port=2237)
+        sock = Mock()
+        listener._query_sock = sock
+        listener._active_app_id = app_id
+        return listener, sock
+
+    @staticmethod
+    def _header(msg_type: int, app_id: str) -> bytes:
+        raw = app_id.encode()
+        return struct.pack(">IIII", 0xADBCCBDA, 2, msg_type, len(raw)) + raw
+
+    def test_halt_tx_goes_to_the_address_wsjtx_sends_from(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        listener._handle_datagram(self._header(0, "WSJT-X") + struct.pack(">I", 2) + struct.pack(">I", 0xFFFFFFFF) * 2, ("127.0.0.1", 50123))
+        self.assertTrue(listener.send_halt_tx())
+        expected = self._header(8, "WSJT-X") + b"\x00"
+        sock.sendto.assert_called_once_with(expected, ("127.0.0.1", 50123))
+
+    def test_halt_tx_needs_a_known_wsjtx_address(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
+
+    def test_stale_wsjtx_address_is_not_used(self) -> None:
+        listener, sock = self._listener_with_socket("WSJT-X")
+        listener._client_addrs["WSJT-X"] = {("127.0.0.1", 50123): time.monotonic() - 60}
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
+
+    def test_commands_need_a_connected_instance(self) -> None:
+        listener, sock = self._listener_with_socket(None)
+        self.assertFalse(listener.send_halt_tx())
+        sock.sendto.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

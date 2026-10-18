@@ -615,19 +615,23 @@ export default function App() {
     speechRecheck,
   ]);
 
+  const [controlWsjtx, setControlWsjtx] = useState<boolean>(() => localStorage.getItem("airwsjtx.controlWsjtx") === "1");
+  useEffect(() => { localStorage.setItem("airwsjtx.controlWsjtx", controlWsjtx ? "1" : "0"); }, [controlWsjtx]);
+
   async function startQso() {
     try {
       const r = await rpc("start_qso") as { state: string };
       setStatus((s) => s ? { ...s, state: r.state } : s);
-      addLog("QSO marked started (enable Tx in WSJT-X to transmit)");
+      addLog("QSO marked started — press Enable Tx in WSJT-X (it cannot be enabled remotely)");
     } catch (e) { addLog(`Error: ${e}`); }
   }
 
   async function finishQso(abort = false) {
     try {
-      const r = await rpc("finish_qso", { abort }) as { state: string };
+      const r = await rpc("finish_qso", { abort, control_wsjtx: controlWsjtx }) as { state: string; wsjtx_tx_sent?: boolean | null };
       setStatus((s) => s ? { ...s, state: r.state } : s);
-      addLog(abort ? "QSO marked aborted (use Halt Tx in WSJT-X to stop transmitting)" : "QSO marked complete (WSJT-X logs the contact itself)");
+      if (!controlWsjtx) addLog(abort ? "QSO marked aborted (use Halt Tx in WSJT-X to stop transmitting)" : "QSO marked complete (WSJT-X logs the contact itself)");
+      else addLog(`${abort ? "QSO aborted" : "QSO completed"} — ${r.wsjtx_tx_sent ? "Halt Tx sent to WSJT-X" : "could not reach WSJT-X, use Halt Tx there"}`);
     } catch (e) { addLog(`Error: ${e}`); }
   }
 
@@ -1640,6 +1644,11 @@ export default function App() {
           onClick={() => { const v = !autoLock; setAutoLock(v); rpc("auto_lock_set", { enabled: v }).catch(() => {}); }}>
           {autoLock ? "🔒 Auto-lock" : "🔓 Manual"}
         </button>
+        <label style={{ fontSize: 11, color: controlWsjtx ? "var(--yellow)" : "var(--text-muted)", display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}
+          title="When on, Abort and Finish send Halt Tx to WSJT-X. WSJT-X must have 'Accept UDP requests' ticked (Settings > Reporting). Enable Tx cannot be sent remotely.">
+          <input type="checkbox" checked={controlWsjtx} onChange={(e) => setControlWsjtx(e.target.checked)} />
+          Halt WSJT-X Tx on Abort/Finish
+        </label>
         <div style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>
           {dxCall && selectedDxGrid && `${myGrid ?? "?"} → ${selectedDxGrid}`}
         </div>

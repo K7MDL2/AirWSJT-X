@@ -402,8 +402,16 @@ def handle(msg: dict) -> None:
             _ok(id_, {"state": supervisor.session.state.value})
 
         elif method == "finish_qso":
-            supervisor.finish_qso(abort=params.get("abort", False))
-            _ok(id_, {"state": supervisor.session.state.value})
+            wsjtx_tx = None
+            if params.get("control_wsjtx") and _wsjtx_listener:
+                wsjtx_tx = _wsjtx_listener.send_halt_tx()
+            try:
+                supervisor.finish_qso(abort=params.get("abort", False))
+            except ValueError:
+                # Halt Tx must still go out when the app session is already closed but WSJT-X is transmitting
+                if not wsjtx_tx:
+                    raise
+            _ok(id_, {"state": supervisor.session.state.value, "wsjtx_tx_sent": wsjtx_tx})
 
         elif method == "get_status":
             s = supervisor.session
