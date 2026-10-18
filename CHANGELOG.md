@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.21
+
+### Added
+- Mobile settings: credits/about section at the bottom with project info, contributors, and version number.
+
+## 0.3.20
+
+### Added
+- **DX station compass indicator**: DX station direction and callsign shown on the outer compass rose ring.
+- **WSJT-X QSO state tracking**: app state machine follows Idle → CQ → QSO workflow from WSJT-X UDP messages.
+- `DarkSelect` component for consistent dark-themed dropdowns across the desktop UI.
+
+### Fixed
+- Linux WSJT-X rig filter box background changed from white to black for readability.
+- Rotator panel UI improvements and extensive rotator testing fixes.
+
 ## 0.3.19
 
 ### Fixed

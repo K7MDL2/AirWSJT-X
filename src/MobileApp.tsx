@@ -629,6 +629,20 @@ export default function MobileApp() {
               {dbBusy ? "Downloading..." : dbStatus?.entries ? "Update Database" : "Download Database"}
             </button>
           </div>
+          <div style={{ borderTop: "1px solid #30363d", paddingTop: 16, textAlign: "center" }}>
+            <div style={{ fontSize: 15, fontWeight: 600, color: "#c9d1d9", marginBottom: 8 }}>AirWSJT-X</div>
+            <div style={{ fontSize: 13, color: "#8b949e", marginBottom: 4 }}>
+              Aircraft scatter assistant for WSJT-X
+            </div>
+            <div style={{ fontSize: 13, color: "#8b949e", marginBottom: 12 }}>Version 0.3.21</div>
+            <div style={{ fontSize: 12, color: "#8b949e", lineHeight: 1.6 }}>
+              Created by Carlos Picoto, AD7NP<br />
+              Contributions by Mike, K7MDL2
+            </div>
+            <div style={{ fontSize: 11, color: "#484f58", marginTop: 12 }}>
+              © 2024–2026 AD7NP
+            </div>
+          </div>
         </div>
       </div>
     );
