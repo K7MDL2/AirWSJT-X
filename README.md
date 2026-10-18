@@ -22,6 +22,7 @@ All platforms are built from CI on every tagged release.
 |----------|--------|----------|
 | **macOS** (Apple Silicon) | `.dmg` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
 | **Windows** (x64) | `.msi` / `.exe` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
+| **Windows** (ARM64 / Snapdragon) | `_arm64-setup.exe` | [ARM64 build artifacts](https://github.com/cpicoto/AirWSJT-X/actions/workflows/windows-arm64.yml) (also included in future tagged releases) |
 | **Linux** (x64) | `.AppImage` / `.deb` / `.rpm` | [Latest release](https://github.com/cpicoto/AirWSJT-X/releases/latest) |
 | **Android** (ARM) | `.apk` (signed, arm64 + armeabi-v7a) | [Download](https://github.com/K7MDL2/AirWSJT-X/releases/latest/download/AirWSJT-X-android-arm.apk) |
 | **Android** (x86_64) | `.apk` (signed) | [Download](https://github.com/K7MDL2/AirWSJT-X/releases/latest/download/AirWSJT-X-android-x86_64.apk) |
@@ -125,6 +126,25 @@ Open in VS Code and use **Terminal > Run Task**:
 - **AirWSJT-X: Desktop Build and Run** — build release binary, then launch
 - **AirWSJT-X: Desktop Dev** — launch `tauri dev` with hot-reloading
 - **AirWSJT-X: Build Android APK** — build the Android APK (requires Android SDK/NDK setup) (currently untested)
+
+### Windows ARM64
+
+The **Windows ARM64 setup** workflow runs on `windows-11-arm` with ARM64 Node.js, Python 3.12, and Rust. It builds both the desktop app and Python sidecar natively, checks their PE machine types, and exercises the frozen sidecar's JSON-line protocol from an empty working directory. Download `AirWSJT-X-windows-arm64` from the run's **Artifacts** section and extract `AirWSJT-X_<version>_arm64-setup.exe`. Tagged releases attach the same setup alongside the existing x64 installers.
+
+For a local build, use Windows 11 ARM64, native ARM64 Python/Node.js, and Visual Studio's C++ ARM64 build tools:
+
+```powershell
+npm ci
+python -m pip install pyinstaller certifi
+python -m unittest discover -s tests -v
+python -m PyInstaller --noconfirm --onefile --name airwsjtx_bridge --distpath src-tauri\binaries --paths . sidecar\airwsjtx_bridge.py
+Move-Item -Force src-tauri\binaries\airwsjtx_bridge.exe src-tauri\binaries\airwsjtx_bridge-aarch64-pc-windows-msvc.exe
+rustup target add aarch64-pc-windows-msvc
+npx tauri build --ci --target aarch64-pc-windows-msvc --config src-tauri\tauri.desktop.conf.json --config src-tauri\tauri.windows-arm64.conf.json
+python scripts\verify_windows_arm64.py --app src-tauri\target\aarch64-pc-windows-msvc\release\airwsjtx.exe --sidecar src-tauri\binaries\airwsjtx_bridge-aarch64-pc-windows-msvc.exe
+```
+
+The setup is under `src-tauri\target\aarch64-pc-windows-msvc\release\bundle\nsis`. ARM64 uses NSIS, not WiX/MSI. The NSIS installer bootstrapper may run under Windows emulation; the installed application and Python sidecar are native ARM64. This build does not change the architecture requirements of separately installed WSJT-X or rotctld.
 
 ### Running Tests
 
