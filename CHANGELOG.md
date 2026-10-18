@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.21
+
+### Added
+- Mobile settings: credits/about section at the bottom with project info, contributors, and version number.
+
 ## 0.3.20
 
 ### Added
