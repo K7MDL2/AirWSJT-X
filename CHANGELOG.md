@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.22
+
+### Added
+- **Desktop Sky Dome visualization**: optional polar-projection panel beside the Az/El display with labelled elevation reference rings at 22.5°, 45°, and 67.5°. Hidden by default with persisted Show/Hide preference. Desktop only — mobile unchanged.
+- **Native Windows ARM64 setup builds**: ARM64 NSIS installer with native PE payloads and sidecar RPC verification. Published alongside existing x64 installers on tagged releases.
+- ARM64 packaging tests, shared version synchronization script, and build documentation.
+
+### Changed
+- Rotator UI polish: rotor on/off and speech buttons, Sync, connect row, blocked clicks when rotor off.
+- Derived QSO timeline: Idle/Locked/Tracking/Ready/QSO unified with header badge; Begin Session and Start QSO re-arm after abort/complete.
+- WSJT-X QSO Logged parsing with auto-complete; opt-in Halt Tx on Abort/Finish via UDP.
+- Dark-themed scrollbars and spin controls on Linux.
+
 ## 0.3.21
 
 ### Added
