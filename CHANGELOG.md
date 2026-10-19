@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.23
+
+### Added
+- Desktop Sky Dome course overlay for the locked aircraft: station-relative estimated approach and dashed future track, direction arrow, and one-minute markers for the next five minutes. Updates with aircraft reports, clips at the radio horizon, and reports missing prediction data. Desktop-only visibility defaults and mobile behavior are unchanged.
+
+### Fixed
+- Integrated the macOS TestFlight sandbox-startup fix validated in 0.3.22 build 18: signed nested Python helper packaging, preserved network entitlements and library validation, and a sandboxed startup gate before upload.
+- Keep the locked aircraft in backend updates when it ranks below the first 20 candidates, preserve due-north ground tracks, and reserve space for course guidance at small desktop window sizes.
+
+### Documentation
+- Added agent/review guardrails and macOS release checks to prevent sandbox packaging regressions.
+
 ## 0.3.22
 
 ### Added
@@ -12,6 +24,9 @@
 - Derived QSO timeline: Idle/Locked/Tracking/Ready/QSO unified with header badge; Begin Session and Start QSO re-arm after abort/complete.
 - WSJT-X QSO Logged parsing with auto-complete; opt-in Halt Tx on Abort/Finish via UDP.
 - Dark-themed scrollbars and spin controls on Linux.
+
+### Fixed
+- **macOS TestFlight backend startup (build 18)**: restored WSJT-X UDP and aircraft-feed connectivity by replacing the sandbox-incompatible PyInstaller onefile launcher with a signed nested Python helper app. Embedded runtime libraries use the distribution signing identity, and a sandboxed backend startup check now gates uploads. Ordinary desktop and mobile packaging are unchanged.
 
 ## 0.3.21
 

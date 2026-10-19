@@ -61,6 +61,18 @@ The compass outer ring marks the DX station's bearing and callsign. **Auto** mod
 
 **Sky Dome** is an optional, desktop-only polar view of aircraft azimuth and elevation, hidden by default. Use **Show / Hide** beside the **Az / El** display controls; the choice is remembered. It sits above the main columns, alongside the Az / El panel when visible, and scales to the window without clipping the dome. The outer edge is the horizon (0 degrees), the centre is the zenith (90 degrees), and labelled concentric rings mark 22.5, 45, and 67.5 degrees. Click an aircraft to lock it, or a point in the sky to set the rotator target.
 
+Locking an aircraft adds a blue estimated course across the dome: a faint approach
+extension, dashed future track, direction arrow, and one-minute markers for the
+next five minutes while above the horizon. The curve updates with aircraft
+reports using its geographic position, ground track, speed and altitude relative
+to MY station, including station altitude and the same effective-Earth-radius
+elevation model as tracking. It extends up to 30 minutes each way, clipped at the
+radio horizon. Both directions are estimates assuming no turns or altitude/speed
+changes, not recorded history or a filed flight plan. Missing station or motion
+data is reported instead of drawing a guessed course. Only the locked aircraft's
+course is shown, even when it is outside the first 20 candidates; mobile is
+unchanged.
+
 ### Mobile Mode
 
 The mobile app operates independently — enter your grid locator, select an aircraft data source (OpenSky, ADS-B Exchange, or a dump1090 receiver on your network), and aircraft in your area appear on the compass rose with azimuth, elevation, and distance. Speech callouts guide antenna pointing hands-free.
@@ -102,6 +114,12 @@ Credentials are stored in the OS credential manager (Keychain, Credential Manage
 - [PyInstaller](https://pyinstaller.org/) (desktop only)
 
 ### Desktop
+
+These commands are for ordinary desktop builds, **not macOS TestFlight / Mac App
+Store**. Sandboxed macOS distribution requires a signed, bundled Python helper
+instead of `--onefile`; follow the
+[TestFlight packaging guide and release checks](CONTRIBUTING.md#macos-testflight-packaging)
+and `.github/workflows/macos-testflight.yml`.
 
 ```bash
 npm ci
@@ -162,6 +180,15 @@ cargo test --manifest-path src-tauri/Cargo.toml --lib
 ```
 
 ## FAQ
+
+### Why are both WSJT-X and NET disconnected on macOS TestFlight?
+
+The Python backend may have failed to start rather than lost network access.
+Version 0.3.22 build 18 fixes a sandbox-incompatible Python launcher that blocked
+both services; update older affected builds through TestFlight. If the problem
+persists, report the version/build number and native sidecar startup errors.
+See [diagnostic guidance](CONTRIBUTING.md#diagnosing-simultaneous-wsjtx-and-net-disconnection)
+before changing firewall or aircraft-account settings.
 
 ### Is AirWSJT-X safe for airplanes?
 
