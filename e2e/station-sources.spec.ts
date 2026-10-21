@@ -57,6 +57,34 @@ test("MY follows valid WSJT-X grids ahead of callbook, while explicit local over
   await expect.poll(() => lastRpc(page, "airscout_set_stations")).toMatchObject({ locator_a: "CN85" });
 });
 
+test("last used local DX station and altitude are restored on startup", async ({ page }) => {
+  await ready(page);
+  await page.getByRole("combobox", { name: "DX favorites" }).selectOption("0");
+  const call = await page.getByRole("textbox", { name: "DX callsign", exact: true }).inputValue();
+  const grid = (await page.getByRole("textbox", { name: "DX grid", exact: true }).inputValue()).toUpperCase();
+  await page.getByRole("textbox", { name: "DX altitude (m)", exact: true }).fill("345");
+  await page.getByRole("button", { name: "Store DX station" }).click();
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "DX callsign", exact: true })).toHaveValue(call);
+  await expect(page.getByRole("textbox", { name: "DX grid", exact: true })).toHaveValue(grid);
+  await expect(page.getByRole("textbox", { name: "DX altitude (m)", exact: true })).toHaveValue("345");
+  await expect(page.getByRole("button", { name: "DX station source" })).toHaveText("Local");
+  await expect.poll(() => lastRpc(page, "airscout_set_stations")).toMatchObject({ locator_b: grid, dx_local: true });
+});
+
+test("last WSJT-X DX is restored until fresh WSJT-X data arrives", async ({ page }) => {
+  await ready(page);
+  await wsjtx(page, { dx_call: "K7DX", dx_grid: "CN90AA" });
+  await expect(page.getByRole("textbox", { name: "DX grid", exact: true })).toHaveValue("CN90AA");
+  await page.reload();
+  await expect(page.getByRole("textbox", { name: "DX callsign", exact: true })).toHaveValue("K7DX");
+  await expect(page.getByRole("textbox", { name: "DX grid", exact: true })).toHaveValue("CN90AA");
+  await expect(page.getByRole("button", { name: "DX station source" })).toHaveText("WSJT-X");
+  await wsjtx(page, { dx_call: "W7NEW", dx_grid: "CN84" });
+  await expect(page.getByRole("textbox", { name: "DX callsign", exact: true })).toHaveValue("W7NEW");
+  await expect(page.getByRole("textbox", { name: "DX grid", exact: true })).toHaveValue("CN84");
+});
+
 test("a favorite's grid and altitude beat stale callbook and portable grids without debounce writeback", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("airwsjtx.favoriteDx", JSON.stringify([{ call: "K7DX", grid: "CN90AA", alt: "345" }]));

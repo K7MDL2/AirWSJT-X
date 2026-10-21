@@ -7,12 +7,13 @@ export interface DarkSelectOption {
 
 // Custom dropdown: native <select> popups ignore dark styling on some Linux webviews.
 export default function DarkSelect({
-  value, options, disabled, width = 180, ariaLabel, onChange,
+  value, options, disabled, width = 180, popupWidth, ariaLabel, onChange,
 }: {
   value: string;
   options: DarkSelectOption[];
   disabled?: boolean;
-  width?: number;
+  width?: number | string;
+  popupWidth?: number;
   ariaLabel?: string;
   onChange: (value: string) => void;
 }) {
@@ -23,7 +24,12 @@ export default function DarkSelect({
   function toggle() {
     if (!open && ref.current) {
       const r = ref.current.getBoundingClientRect();
-      setRect({ top: r.bottom + 2, left: r.left, width: r.width });
+      const menuWidth = Math.min(popupWidth ?? r.width, window.innerWidth - 8);
+      setRect({
+        top: r.bottom + 2,
+        left: Math.max(4, Math.min(r.left, window.innerWidth - menuWidth - 4)),
+        width: menuWidth,
+      });
     }
     setOpen(o => !o);
   }
