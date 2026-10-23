@@ -17,6 +17,7 @@ The **Auto** and **Manual** buttons at the top of the rotator panel choose what 
 ### Auto mode details
 
 - **Plane lock lost:** the last known Az and El stay on screen, greyed out to show they are no longer valid. No new rotator commands are sent, so the rotator stays where it was. The app announces "Lost plane lock" if speech is on.
+- **Automatic unlock:** each aircraft-list refresh releases a locked plane if it is no longer in the full filtered aircraft list with valid airborne position and altitude data. This also applies after station or flight-filter changes. Falling outside the displayed top five candidates does not release the lock.
 - **Next plane locked:** the values return to normal and the new Az and El are sent to the rotator.
 - **No rotator needed:** Auto mode speech works even when the rotator is off or not connected, so you can point an antenna by voice. Speech is silent in Auto while there is no valid plane lock.
 - **Which plane:** candidates are ranked by a geometry score; see [Plane scoring](plane-scoring.md).

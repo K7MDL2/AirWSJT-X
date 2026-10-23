@@ -10,6 +10,32 @@ from sidecar import airwsjtx_bridge
 
 
 class AirscoutBridgeCacheTests(unittest.TestCase):
+    def test_station_filter_and_source_changes_emit_aircraft_update(self) -> None:
+        with patch.multiple(airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+                            _station_a_alt_m=0.0, _station_b_alt_m=0.0,
+                            _source_priority=["opensky"], _active_source=None,
+                            _my_call_override=None, _my_grid_override=None):
+            with patch.object(airwsjtx_bridge, "_emit"), \
+                    patch.object(airwsjtx_bridge, "_emit_aircraft_update") as emit_update, \
+                    patch.object(airwsjtx_bridge, "_start_configured_airscout_feed"), \
+                    patch.object(airwsjtx_bridge, "_write_filters"), \
+                    patch.object(airwsjtx_bridge, "_write_source_priority"):
+                requests = [
+                    {"method": "airscout_set_stations",
+                     "params": {"locator_a": "CN88", "locator_b": "CN90"}},
+                    {"method": "set_my_station_override",
+                     "params": {"grid": "CN88", "altitude_m": 100}},
+                    {"method": "set_dx_altitude", "params": {"altitude_m": 200}},
+                    {"method": "airscout_apply_filters",
+                     "params": {"filters": {"priority_flight": "UAL123"}}},
+                    {"method": "airscout_set_sources", "params": {"sources": ["dump1090"]}},
+                ]
+                for index, request in enumerate(requests):
+                    with self.subTest(method=request["method"]):
+                        emit_update.reset_mock()
+                        airwsjtx_bridge.handle({"id": str(index), **request})
+                        emit_update.assert_called_once_with(try_auto_lock=False)
+
     def test_startup_loads_numeric_filters_but_no_active_flight(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "filters.json")
@@ -40,6 +66,7 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                             _wsjtx_band_mhz=None, _wsjtx_freq_hz=None,
                             supervisor=AirWSJTXSupervisor()), \
                 patch.object(airwsjtx_bridge, "_start_configured_airscout_feed"), \
+                patch.object(airwsjtx_bridge, "_emit_aircraft_update"), \
                 patch.object(airwsjtx_bridge, "_emit"), \
                 patch.object(airwsjtx_bridge, "_aircraft_matches_filters", return_value=True), \
                 patch.object(airwsjtx_bridge, "scatter_geometry",
@@ -73,6 +100,7 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                         patch.object(airwsjtx_bridge, "_get_scatter_aircraft_with_total",
                                      return_value=(ranked, 45)), \
                         patch.object(airwsjtx_bridge, "_update_rotator_for_locked"), \
+                        patch.object(airwsjtx_bridge, "_do_unlock") as unlock, \
                         patch.object(airwsjtx_bridge, "_try_auto_lock"), \
                         patch.object(airwsjtx_bridge, "_emit") as emit:
                     airwsjtx_bridge._emit_aircraft_update()
@@ -82,6 +110,39 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                 self.assertEqual(payload["flight_data"], ranked)
                 self.assertEqual(payload["total"], 45)
                 self.assertEqual(len({ac["icao24"] for ac in payload["aircraft"]}), len(expected))
+                if locked_id == "missing":
+                    unlock.assert_called_once_with()
+                else:
+                    unlock.assert_not_called()
+
+    def test_aircraft_update_unlocks_when_locked_aircraft_has_no_current_candidate_data(self) -> None:
+        from airwsjtx.supervisor import AirWSJTXSupervisor
+
+        ac = Aircraft(
+            icao24="abc123", callsign="TEST1", lat=48.5, lon=-123,
+            altitude_m=10000, velocity_ms=200, heading_deg=0,
+            vertical_rate_ms=0, on_ground=False,
+        )
+        for reason in ("missing", "no_position", "on_ground", "filtered"):
+            with self.subTest(reason=reason):
+                aircraft = [] if reason == "missing" else [ac]
+                with patch.multiple(
+                    airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+                    _aircraft_cache=aircraft, _locked_aircraft_id=ac.icao24, _lock_score=0.5,
+                    supervisor=AirWSJTXSupervisor(),
+                ), patch.object(ac, "lat", None if reason == "no_position" else ac.lat), \
+                        patch.object(ac, "on_ground", reason == "on_ground"), \
+                        patch.object(airwsjtx_bridge, "_aircraft_matches_filters",
+                                     return_value=reason != "filtered"), \
+                        patch.object(airwsjtx_bridge, "_update_rotator_for_locked") as track, \
+                        patch.object(airwsjtx_bridge, "_try_auto_lock") as auto_lock, \
+                        patch.object(airwsjtx_bridge, "_emit") as emit:
+                    airwsjtx_bridge._emit_aircraft_update()
+                    self.assertIsNone(airwsjtx_bridge._locked_aircraft_id)
+                    self.assertEqual(airwsjtx_bridge._lock_score, 0.0)
+                    self.assertEqual(emit.call_args.args[0]["event"], "plane_unlocked")
+                    track.assert_not_called()
+                    auto_lock.assert_not_called()
 
     def test_scatter_payload_preserves_due_north_heading_for_course_prediction(self) -> None:
         aircraft = Aircraft(
@@ -517,7 +578,8 @@ class SourcePriorityDefaultAndPersistenceTests(unittest.TestCase):
                                     _active_source=None):
                     with patch.object(airwsjtx_bridge, "_start_configured_airscout_feed"):
                         with patch.object(airwsjtx_bridge, "_ok"):
-                            with patch.object(airwsjtx_bridge, "_emit"):
+                            with patch.object(airwsjtx_bridge, "_emit"), \
+                                    patch.object(airwsjtx_bridge, "_emit_aircraft_update"):
                                 airwsjtx_bridge.handle({
                                     "id": "set_src",
                                     "method": "airscout_set_sources",
