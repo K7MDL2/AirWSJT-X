@@ -2303,6 +2303,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Call</th><th>FL</th><th>Score</th>
+                    <th title="Feed-reported aircraft ground-track direction, degrees clockwise from true north">HDG°</th>
                     <th>AZ-A</th><th>EL-A</th><th>Off°</th><th>km</th>
                   </tr>
                 </thead>
@@ -2322,6 +2323,9 @@ export default function App() {
                         </td>
                         <td>{Math.round(ac.altitude_ft / 100)}</td>
                         <td style={{ color: scColor, fontWeight: 600 }}>{(sc * 100).toFixed(0)}%</td>
+                        <td title={ac.heading_deg == null ? "Aircraft heading not reported" : "Feed-reported ground-track direction"}>
+                          {ac.heading_deg == null ? "—" : `${Math.round(ac.heading_deg) % 360}°`}
+                        </td>
                         <td>{ac.az_a.toFixed(0)}°</td>
                         <td style={{ color: ac.el_a > 0 && ac.el_a < 20 ? "var(--green)" : "var(--text-muted)" }}>
                           {ac.el_a.toFixed(0)}°

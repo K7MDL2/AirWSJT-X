@@ -342,6 +342,38 @@ test("Flight Data shows all scored aircraft while candidates keep their selectio
   await expect(rows.last()).toBeInViewport();
 });
 
+test("Flight Data distinguishes reported heading from station azimuth and missing heading", async ({ page }) => {
+  await page.setViewportSize({ width: 840, height: 800 });
+  await page.goto("/");
+  const planes = [0, 270, 359.6, null].map((heading, i) => ({
+    icao24: `heading${i}`, callsign: `HDG${i}`,
+    lat: 47.5, lon: -122.4, altitude_ft: 30000, heading_deg: heading, velocity_kts: 450,
+    az_a: 345, el_a: 1, az_b: 173, el_b: 2, off_path_deg: 7, range_a_km: 289,
+    scatter_score: 0.38 - i / 100,
+  }));
+  await page.evaluate(planes => {
+    const emit = Reflect.get(window, "__tauriMockEmit") as (event: string, payload: string) => void;
+    emit("sidecar-message", JSON.stringify({
+      event: "airscout_update",
+      data: { aircraft: [], flight_data: planes, total: planes.length,
+        station_a: "CN84XS67", station_b: "CN89JI" },
+    }));
+  }, planes);
+  const region = page.getByRole("region", { name: "Flight Data" });
+  const header = region.getByRole("columnheader", { name: "HDG°", exact: true });
+  await expect(header).toBeVisible();
+  await expect(header).toHaveAttribute("title", /ground-track.*true north/);
+  const rows = region.locator("tbody tr");
+  await expect(rows).toHaveCount(4);
+  for (const [i, expected] of ["0°", "270°", "0°", "—"].entries()) {
+    await expect(rows.nth(i).locator("td").nth(3)).toHaveText(expected);
+    await expect(rows.nth(i).locator("td").nth(4)).toHaveText("345°");
+  }
+  await expect(rows.last().locator("td").nth(3)).toHaveAttribute("title", "Aircraft heading not reported");
+  expect(await region.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await expect(page.locator(".plane-candidate")).toHaveCount(0);
+});
+
 test("flight favorites store and restore flight number and Only mode across reloads", async ({ page }) => {
   await page.goto("/");
   const flight = page.getByRole("textbox", { name: "Priority flight number" });

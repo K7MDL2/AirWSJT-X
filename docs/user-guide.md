@@ -30,6 +30,8 @@ The **Auto** and **Manual** buttons at the top of the rotator panel choose what 
 
 **Flight Data**, below the aircraft sources, shows all received aircraft with valid airborne position and altitude data, without candidate filters or the candidate payload limit. It is scrollable and sorted by scatter score, highest first. Rows matching any locally saved flight favorite have a grey background.
 
+**HDG°** shows the feed-reported aircraft ground-track direction clockwise from true north (0° north, 90° east), or a dash when unavailable. This is the direction used by the heading filter, not **AZ-A** (MY's bearing to the aircraft) or **Off°** (position deviation from the station path). A high-scoring aircraft may still fail the heading filter.
+
 **Top Candidates** keeps its existing filters, ranking, and five-entry limit. The currently selected **Flight number** is underlined in its text color when it appears there; saved favorites do not change candidate selection.
 
 The active flight starts blank with **Only** off at startup; saved flight favorites remain available. **Clear**, next to **Store Flight#**, disables the active flight filter without deleting favorites. Choose a favorite to activate its flight number and Only setting again.
