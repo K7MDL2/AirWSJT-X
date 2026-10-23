@@ -1470,6 +1470,8 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
             "total": total,
             "station_a": _station_a_locator,
             "station_b": _station_b_locator,
+            "station_a_alt_m": _station_a_alt_m,
+            "station_b_alt_m": _station_b_alt_m,
             "active_source": active_source,
             "last_update_epoch_s": last_update_epoch_s,
             "cache_age_s": round(age_s, 1) if age_s is not None else None,

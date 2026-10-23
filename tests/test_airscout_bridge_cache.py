@@ -10,6 +10,16 @@ from sidecar import airwsjtx_bridge
 
 
 class AirscoutBridgeCacheTests(unittest.TestCase):
+    def test_aircraft_update_includes_applied_station_altitudes(self) -> None:
+        with patch.multiple(airwsjtx_bridge, _station_a_alt_m=150.0, _station_b_alt_m=1000.0,
+                            _locked_aircraft_id=None, _aircraft_cache=[]), \
+                patch.object(airwsjtx_bridge, "_get_scatter_aircraft_with_total", return_value=([], 0)), \
+                patch.object(airwsjtx_bridge, "_emit") as emit:
+            airwsjtx_bridge._emit_aircraft_update(try_auto_lock=False)
+        payload = emit.call_args.args[0]["data"]
+        self.assertEqual(payload["station_a_alt_m"], 150.0)
+        self.assertEqual(payload["station_b_alt_m"], 1000.0)
+
     def test_settings_refresh_expires_cache_without_tracking_or_relocking(self) -> None:
         from airwsjtx.supervisor import AirWSJTXSupervisor
 

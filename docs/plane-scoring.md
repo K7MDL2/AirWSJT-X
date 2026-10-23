@@ -39,6 +39,8 @@ Otherwise the score is a weighted sum of four parts:
 
 ## Limitations
 
+Flight Data's **Use** column is a separate, display-only prediction of remaining time inside the geometry hard gates (mutual radio visibility and inward-facing endpoint bearings). It does not use optional filters or the score threshold and has no effect on ranking or selection. See [the user guide](user-guide.md#flight-data-and-candidate-highlights) for assumptions, unavailable values and the 30-minute cap. Implementation: [`src/lib/usableTime.ts`](../src/lib/usableTime.ts).
+
 - **Station altitudes:** the bridge passes both MY (station A) and DX (station B) altitudes to `scatter_geometry`. Each defaults to 0 m unless entered in the Stations panel.
 - **Altitude:** apart from the optional minimum-altitude filter, altitude only enters through the elevation angles.
 - **Speed, heading, vertical rate:** these do not affect the score. Heading acts only as a pass/fail filter.
