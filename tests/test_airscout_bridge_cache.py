@@ -191,6 +191,23 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
             self.assertTrue(airwsjtx_bridge._aircraft_matches_filters(plane(-99.0), 40.0, -100.0, 40.0, -80.0))
             self.assertFalse(airwsjtx_bridge._aircraft_matches_filters(plane(-101.0), 40.0, -100.0, 40.0, -80.0))
 
+    def test_approaching_aircraft_remains_a_candidate_and_locked(self) -> None:
+        ac = Aircraft(
+            icao24="approaching", callsign="APPROACH", lat=48.5, lon=-123,
+            altitude_m=10000, velocity_ms=200, heading_deg=180,
+            vertical_rate_ms=0, on_ground=False,
+        )
+        with patch.multiple(airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+                            _aircraft_cache=[ac], _locked_aircraft_id=ac.icao24), \
+                patch.dict(airwsjtx_bridge._aircraft_filters, airwsjtx_bridge._DEFAULT_FILTERS, clear=True), \
+                patch.object(airwsjtx_bridge, "_update_rotator_for_locked") as track, \
+                patch.object(airwsjtx_bridge, "_do_unlock") as unlock, \
+                patch.object(airwsjtx_bridge, "_emit") as emit:
+            airwsjtx_bridge._emit_aircraft_update()
+            self.assertEqual([row["icao24"] for row in emit.call_args.args[0]["data"]["aircraft"]], [ac.icao24])
+            track.assert_called_once()
+            unlock.assert_not_called()
+
     def test_priority_flight_bypasses_filters_and_can_be_exclusive(self) -> None:
         priority = Aircraft(
             icao24="priority", callsign=" UAL123 ", lat=40.0, lon=-101.0,
@@ -247,6 +264,45 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
         self.assertEqual([ac["scatter_score"] for ac in additive], [0.73, 0.73])
         self.assertEqual([ac["icao24"] for ac in exclusive], ["priority"])
         self.assertEqual(exclusive[0]["scatter_score"], 0.73)
+
+    def test_disabling_only_restores_ranked_candidates_while_favorite_is_locked(self) -> None:
+        planes = [
+            Aircraft(
+                icao24=icao, callsign=call, lat=lat, lon=-123,
+                altitude_m=10000, velocity_ms=200, heading_deg=heading,
+                vertical_rate_ms=0, on_ground=False,
+            )
+            for icao, call, lat, heading in [
+                ("favorite", "JBU397", 46.5, 180),
+                ("approaching", "APPROACH", 48.5, 180),
+                ("departing", "DEPART", 48.5, 0),
+            ]
+        ]
+        with patch.multiple(airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+                            _aircraft_cache=planes, _locked_aircraft_id="favorite"), \
+                patch.dict(airwsjtx_bridge._aircraft_filters, airwsjtx_bridge._DEFAULT_FILTERS, clear=True), \
+                patch.object(airwsjtx_bridge, "_write_filters"), \
+                patch.object(airwsjtx_bridge, "_update_rotator_for_locked"), \
+                patch.object(airwsjtx_bridge, "_do_unlock") as unlock, \
+                patch.object(airwsjtx_bridge, "_emit") as emit:
+            for only, expected in [
+                (True, ["favorite"]),
+                (False, ["approaching", "departing", "favorite"]),
+            ]:
+                with self.subTest(only=only):
+                    emit.reset_mock()
+                    airwsjtx_bridge.handle({
+                        "id": "filters", "method": "airscout_apply_filters",
+                        "params": {"filters": {
+                            **airwsjtx_bridge._DEFAULT_FILTERS,
+                            "priority_flight": "JBU397", "priority_flight_exclusive": only,
+                        }},
+                    })
+                    update = next(call.args[0]["data"] for call in emit.call_args_list
+                                  if call.args[0].get("event") == "airscout_update")
+                    self.assertEqual([ac["icao24"] for ac in update["aircraft"]], expected)
+                    self.assertGreater(update["flight_data"][0]["scatter_score"], 0)
+                    unlock.assert_not_called()
 
     def test_flight_data_bypasses_all_filters_without_changing_candidates(self) -> None:
         planes = [

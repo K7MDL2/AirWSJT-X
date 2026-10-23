@@ -35,6 +35,10 @@ The active flight starts blank with **Only** off at startup; saved flight favori
 
 Numeric aircraft filters use compact fields inside the **Filters** section, collapsed by default. Click **Filters** to expand or collapse them without changing their values. The Flight number controls remain outside this section and visible. The Flight number label sits above its input. Flight controls share a row below the numeric filters when space permits, and wrap onto another row on narrow windows so the favorites picker stays visible.
 
+Numeric fields can be cleared while editing. Leaving **Heading ±°** or **Path bearing ±°** blank restores its default (30° or 70°, respectively) when you leave the field.
+
+**Heading ±°** accepts aircraft traveling along the MY–DX path in either direction. At the default 30°, both approaching and departing headings within 30° of the path axis qualify; cross-path headings are excluded. **Path bearing ±°** independently filters the aircraft's position relative to MY's bearing toward DX.
+
 Drag the bottom-right corner grip of the Flight Data scroll area or Log card to resize it vertically. Each height is saved locally and restored at startup; widths continue to follow the window layout. The Log is scrollable and retains the latest 30 entries, newest first.
 
 ### Manual mode details
