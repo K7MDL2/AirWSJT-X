@@ -37,7 +37,7 @@ Numeric aircraft filters use compact fields inside the **Filters** section, coll
 
 Numeric fields can be cleared while editing. Leaving **Heading ±°** or **Path bearing ±°** blank restores its default (30° or 70°, respectively) when you leave the field.
 
-**Heading ±°** accepts aircraft traveling along the MY–DX path in either direction. At the default 30°, both approaching and departing headings within 30° of the path axis qualify; cross-path headings are excluded. **Path bearing ±°** independently filters the aircraft's position relative to MY's bearing toward DX.
+**Heading ±°** accepts aircraft traveling along the MY–DX path in either direction. At the default 30°, both approaching and departing headings within 30° of both endpoint path axes qualify; cross-path headings are excluded. **Path bearing ±°** independently checks the aircraft's position from both stations: its bearing must be within the tolerance of the direction toward the other station at each end. **Off°** shows the larger of these two position deviations, and scoring uses that same worse-end alignment. Swapping MY and DX therefore preserves candidates and scores for identical aircraft data, filters and physical station altitudes; the station-specific pointing readouts swap ends.
 
 Drag the bottom-right corner grip of the Flight Data scroll area or Log card to resize it vertically. Each height is saved locally and restored at startup; widths continue to follow the window layout. The Log is scrollable and retains the latest 30 entries, newest first.
 

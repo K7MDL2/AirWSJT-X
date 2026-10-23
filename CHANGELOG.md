@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- Make candidate position and heading filters, path-alignment scores and Off° independent of MY/DX station order by checking both ends. Preserve station-specific pointing readouts and watched-flight overrides, and honor an explicit zero heading tolerance.
+
 ## 0.3.28
 
 ### Fixed

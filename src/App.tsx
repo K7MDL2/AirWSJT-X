@@ -2068,7 +2068,9 @@ export default function App() {
                         type={type}
                         aria-label={label}
                         title={numericKey === "heading_tolerance_deg"
-                          ? "Allowed heading deviation from the MY–DX path in either direction (approaching or departing)"
+                          ? "Allowed heading deviation from both endpoint path bearings, in either direction (approaching or departing)"
+                          : numericKey === "position_tolerance_deg"
+                          ? "Allowed aircraft bearing deviation toward the other station, checked at both MY and DX"
                           : undefined}
                         value={aircraftFilterDraft?.key === numericKey ? aircraftFilterDraft.value : value ?? ""}
                         onBlur={(e) => {
