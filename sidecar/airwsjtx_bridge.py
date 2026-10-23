@@ -298,6 +298,19 @@ def _aircraft_cache_freshness(age_s: float | None) -> str:
     return "expired"
 
 
+def _current_aircraft_snapshot() -> list[Aircraft]:
+    global _aircraft_last_update_monotonic, _aircraft_last_update_epoch_s
+    now = time.monotonic()
+    with _aircraft_lock:
+        age_s = (max(0.0, now - _aircraft_last_update_monotonic)
+                 if _aircraft_last_update_monotonic is not None else None)
+        if _aircraft_cache_freshness(age_s) == "expired":
+            _aircraft_cache.clear()
+            _aircraft_last_update_monotonic = None
+            _aircraft_last_update_epoch_s = None
+        return list(_aircraft_cache)
+
+
 def _emit(msg: dict) -> None:
     """Thread-safe write to stdout."""
     with _stdout_lock:
@@ -1344,20 +1357,7 @@ def _aircraft_matches_filters(ac: Aircraft, lat_a: float, lon_a: float, lat_b: f
 
 def _get_scatter_aircraft() -> list[dict]:
     """Compute scatter geometry for all cached aircraft and return sorted list."""
-    global _aircraft_last_update_monotonic, _aircraft_last_update_epoch_s
-    now_monotonic = time.monotonic()
-    with _aircraft_lock:
-        age_s = (
-            max(0.0, now_monotonic - _aircraft_last_update_monotonic)
-            if _aircraft_last_update_monotonic is not None
-            else None
-        )
-        if _aircraft_cache_freshness(age_s) == "expired":
-            _aircraft_cache.clear()
-            _aircraft_last_update_monotonic = None
-            _aircraft_last_update_epoch_s = None
-            return []
-        snapshot = list(_aircraft_cache)
+    snapshot = _current_aircraft_snapshot()
     if not _station_a_locator:
         return []
     try:
@@ -1405,6 +1405,7 @@ def _get_scatter_aircraft() -> list[dict]:
 
 
 def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[list[dict], int]:
+    snapshot = _current_aircraft_snapshot()
     if not _station_a_locator:
         return [], 0
     try:
@@ -1424,9 +1425,6 @@ def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[lis
 
     results = []
     total = 0
-    with _aircraft_lock:
-        snapshot = list(_aircraft_cache)
-
     for ac in snapshot:
         if not ac.has_position:
             continue
@@ -1479,8 +1477,7 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
         },
     })
     # Update tracking or try auto-lock
-    with _aircraft_lock:
-        snapshot = list(_aircraft_cache)
+    snapshot = _current_aircraft_snapshot()
     if _locked_aircraft_id:
         if any(ac["icao24"] == _locked_aircraft_id for ac in aircraft):
             _update_rotator_for_locked(snapshot)

@@ -10,6 +10,61 @@ from sidecar import airwsjtx_bridge
 
 
 class AirscoutBridgeCacheTests(unittest.TestCase):
+    def test_settings_refresh_expires_cache_without_tracking_or_relocking(self) -> None:
+        from airwsjtx.supervisor import AirWSJTXSupervisor
+
+        ac = Aircraft(
+            icao24="abc123", callsign="TEST1", lat=48.5, lon=-123,
+            altitude_m=10000, velocity_ms=200, heading_deg=0,
+            vertical_rate_ms=0, on_ground=False,
+        )
+        expiry = airwsjtx_bridge._aircraft_cache_expire_after_s
+        for age, expired in ((expiry, False), (expiry + 0.1, True)):
+            for locked in (False, True):
+                with self.subTest(age=age, locked=locked), patch.multiple(
+                    airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+                    _station_b_alt_m=0.0, _aircraft_cache=[ac],
+                    _aircraft_last_update_monotonic=1000.0,
+                    _aircraft_last_update_epoch_s=123456,
+                    _locked_aircraft_id=ac.icao24 if locked else None, _lock_score=0.5,
+                    supervisor=AirWSJTXSupervisor(),
+                ), patch.dict(airwsjtx_bridge._aircraft_filters,
+                              airwsjtx_bridge._DEFAULT_FILTERS, clear=True), \
+                        patch.object(airwsjtx_bridge.time, "monotonic", return_value=1000.0 + age), \
+                        patch.object(airwsjtx_bridge, "_update_rotator_for_locked") as track, \
+                        patch.object(airwsjtx_bridge, "_try_auto_lock") as auto_lock, \
+                        patch.object(airwsjtx_bridge, "_emit") as emit:
+                    airwsjtx_bridge.handle({
+                        "id": "alt", "method": "set_dx_altitude",
+                        "params": {"altitude_m": 200},
+                    })
+                    data = next(call.args[0]["data"] for call in emit.call_args_list
+                                if call.args[0].get("event") == "airscout_update")
+                    self.assertEqual(data["data_freshness"], "expired" if expired else "stale")
+                    self.assertEqual(len(data["aircraft"]), 0 if expired else 1)
+                    self.assertEqual(len(data["flight_data"]), 0 if expired else 1)
+                    self.assertEqual(data["total"], 0 if expired else 1)
+                    self.assertEqual(track.call_count, int(locked and not expired))
+                    self.assertEqual(airwsjtx_bridge._locked_aircraft_id,
+                                     ac.icao24 if locked and not expired else None)
+                    auto_lock.assert_not_called()
+
+    def test_feed_refresh_does_not_auto_lock_expired_cache(self) -> None:
+        ac = Aircraft(
+            icao24="abc123", callsign="TEST1", lat=48.5, lon=-123,
+            altitude_m=10000, velocity_ms=200, heading_deg=0,
+            vertical_rate_ms=0, on_ground=False,
+        )
+        with patch.multiple(
+            airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
+            _aircraft_cache=[ac], _locked_aircraft_id=None,
+            _aircraft_last_update_monotonic=1000.0,
+        ), patch.object(airwsjtx_bridge.time, "monotonic", return_value=2000.0), \
+                patch.object(airwsjtx_bridge, "_try_auto_lock") as auto_lock, \
+                patch.object(airwsjtx_bridge, "_emit"):
+            airwsjtx_bridge._emit_aircraft_update()
+            auto_lock.assert_called_once_with([])
+
     def test_station_filter_and_source_changes_emit_aircraft_update(self) -> None:
         with patch.multiple(airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
                             _station_a_alt_m=0.0, _station_b_alt_m=0.0,
