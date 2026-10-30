@@ -532,6 +532,8 @@ export default function App() {
   const overlayRef = useRef<HTMLDivElement>(null);
   const overlayDragRef = useRef<{ dx: number; dy: number } | null>(null);
   const [aircraftFilters, setAircraftFilters] = useState<AircraftFilterSettings>(() => loadAircraftFilters(null, null));
+  const confirmedAircraftFiltersRef = useRef(aircraftFilters);
+  const aircraftFilterRequestRef = useRef(0);
   const [aircraftFilterDraft, setAircraftFilterDraft] = useState<{ key: NumericAircraftFilterKey; value: string } | null>(null);
   const activeFlightRef = useRef({ priority_flight: "", priority_flight_exclusive: false });
   const [callsignDbStatus, setCallsignDbStatus] = useState<CallsignDbStatus | null>(null);
@@ -1040,15 +1042,33 @@ export default function App() {
       heading_tolerance_deg: Number.isFinite(nextFilters.heading_tolerance_deg) ? nextFilters.heading_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.heading_tolerance_deg,
       position_tolerance_deg: Number.isFinite(nextFilters.position_tolerance_deg) ? nextFilters.position_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.position_tolerance_deg,
     };
+    const storageKey = getAircraftFilterStorageKey(airscout?.station_a, airscout?.station_b);
+    const request = ++aircraftFilterRequestRef.current;
     activeFlightRef.current = {
       priority_flight: normalized.priority_flight,
       priority_flight_exclusive: normalized.priority_flight_exclusive,
     };
-    const storageKey = getAircraftFilterStorageKey(airscout?.station_a, airscout?.station_b);
-    localStorage.setItem(storageKey, JSON.stringify(normalized));
     setAircraftFilters(normalized);
     rpc("airscout_apply_filters", { filters: normalized })
-      .catch((e) => addLog(`Aircraft filter update: ${e}`));
+      .then(() => {
+        confirmedAircraftFiltersRef.current = normalized;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(normalized));
+        } catch (e) {
+          addLog(`Aircraft filter storage: ${e}`);
+        }
+      })
+      .catch((e) => {
+        if (request === aircraftFilterRequestRef.current) {
+          const confirmed = confirmedAircraftFiltersRef.current;
+          setAircraftFilters(confirmed);
+          activeFlightRef.current = {
+            priority_flight: confirmed.priority_flight,
+            priority_flight_exclusive: confirmed.priority_flight_exclusive,
+          };
+        }
+        addLog(`Aircraft filter update: ${e}`);
+      });
   }, [airscout?.station_a, airscout?.station_b, addLog]);
 
   const storeFlight = () => {
@@ -1215,9 +1235,8 @@ export default function App() {
       ...loadAircraftFilters(airscout?.station_a, airscout?.station_b),
       ...activeFlightRef.current,
     };
-    setAircraftFilters(stored);
-    rpc("airscout_apply_filters", { filters: stored }).catch(e => addLog(`Aircraft filter restore: ${e}`));
-  }, [airscout?.station_a, airscout?.station_b]);
+    persistAircraftFilters(stored);
+  }, [airscout?.station_a, airscout?.station_b, persistAircraftFilters]);
 
   function savePortableGrid(callsign: string | null, grid: string | null) {
     if (!callsign) return;

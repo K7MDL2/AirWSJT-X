@@ -81,8 +81,8 @@ export async function fetchNativeAircraft(
       vertical_rate_ms: rate === null ? null : rate * 0.00508,
       on_ground: ac.alt_baro === "ground", last_seen: Date.now(),
       position_updated_epoch_s: typeof data.now === "number" && Number.isFinite(data.now)
-        && typeof ac.seen_pos === "number" && Number.isFinite(ac.seen_pos)
-        ? data.now / 1000 - Math.max(0, ac.seen_pos) : null,
+        && typeof ac.seen_pos === "number" && Number.isFinite(ac.seen_pos) && ac.seen_pos >= 0
+        ? data.now / 1000 - ac.seen_pos : null,
     };
   });
 }

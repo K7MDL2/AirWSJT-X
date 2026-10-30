@@ -51,16 +51,42 @@ test("mobile adapters preserve position age rather than treating every fetch as 
     const exchange = await api.fetchNativeAircraft("adsbexchange", 0, 0, 1, 1);
     Object.assign(window, { __mockMobileResponse: { ac: [{ hex: "abc123", seen_pos: 50 }] } });
     const unknown = await api.fetchNativeAircraft("adsbexchange", 0, 0, 1, 1);
+    Object.assign(window, { __mockMobileResponse: {
+      now: Date.now(), ac: [{ hex: "abc123", seen_pos: -5 }],
+    } });
+    const invalid = await api.fetchNativeAircraft("adsbexchange", 0, 0, 1, 1);
     Object.assign(window, { __mockDump1090PositionAge: 50 });
     const dump = await api.fetchDump1090Aircraft("localhost");
     const age = Date.now() / 1000 - dump[0].position_updated_epoch_s;
     return [opensky[0].position_updated_epoch_s, exchange[0].position_updated_epoch_s,
-      unknown[0].position_updated_epoch_s, age];
+      unknown[0].position_updated_epoch_s, age, invalid[0].position_updated_epoch_s];
   });
   expect(timestamps[0]).toBe(1000);
   expect(timestamps[1]).toBe(950);
   expect(timestamps[2]).toBeNull();
   expect(timestamps[3]).toBeCloseTo(50, 1);
+  expect(timestamps[4]).toBeNull();
+});
+
+test("rejected desktop filter persistence leaves the selector and saved policy unchanged", async ({ page }) => {
+  await page.goto("/");
+  const select = page.getByRole("button", { name: "Best-path ranking", exact: true });
+  await expect(select).toHaveText("Legacy geometry (default)");
+  await select.click();
+  await page.getByRole("listbox").getByRole("option", { name: "Range product", exact: true }).click();
+  await expect(select).toHaveText("Range product");
+  await expect.poll(() => page.evaluate(() =>
+    JSON.parse(localStorage.getItem("airwsjtx.aircraftFilters.DEFAULT__DEFAULT") ?? "{}").ranking_method
+  )).toBe("range-product");
+  const saved = await page.evaluate(() => localStorage.getItem("airwsjtx.aircraftFilters.DEFAULT__DEFAULT"));
+  await page.evaluate(() => Object.assign(window, {
+    __mockRpcErrors: { airscout_apply_filters: "disk full" },
+  }));
+  await select.click();
+  await page.getByRole("listbox").getByRole("option", { name: "Window-weighted range product", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Log", exact: true })).toContainText("Aircraft filter update: Error: disk full");
+  await expect(select).toHaveText("Range product");
+  expect(await page.evaluate(() => localStorage.getItem("airwsjtx.aircraftFilters.DEFAULT__DEFAULT"))).toBe(saved);
 });
 
 test("desktop ranking selection is persisted and sent to backend; backend order is preserved", async ({ page }) => {
@@ -119,11 +145,15 @@ test.describe("mobile ranking", () => {
     const list = page.getByRole("list", { name: "Aircraft list" });
     const first = list.getByRole("listitem").first();
     await expect(first).toContainText("MID");
+    await first.click();
+    const requestsBefore = await page.evaluate(() => Reflect.get(window, "__mockAircraftRequests").length);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
     await page.getByRole("combobox", { name: "Best-path ranking", exact: true }).selectOption("range-product");
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await expect(first).toContainText("NEAR");
     await expect(first).toContainText("dB");
+    expect(await page.evaluate(() => Reflect.get(window, "__mockAircraftRequests").length)).toBe(requestsBefore);
+    await expect(page.getByRole("button", { name: "Auto", exact: true })).toBeVisible();
     await page.reload();
     await expect(first).toContainText("NEAR");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -134,5 +164,40 @@ test.describe("mobile ranking", () => {
     await expect(first).toContainText("MID");
     await expect(list).toContainText("Range fallback");
     await expect(first).toContainText("index");
+  });
+
+  test("dump1090 ranking changes rerank the retained snapshot without restarting tracking", async ({ page }) => {
+    await page.clock.install({ time: new Date("2030-01-01T00:00:00Z") });
+    await page.clock.pauseAt(new Date("2030-01-01T00:01:00Z"));
+    await page.addInitScript(() => {
+      localStorage.setItem("airwsjtx.mobile.settings", JSON.stringify({
+        myCall: "TEST", myGrid: "JJ00", dxCall: "DX", dxGrid: "JJ10", speechEnabled: false,
+        aircraftSource: "dump1090", dump1090Host: "localhost",
+      }));
+      const plane = (id: string, lon: number) => ({
+        icao24: id, callsign: id, lat: 0.5, lon, altitude_m: 11000,
+        velocity_ms: 200, heading_deg: 90, vertical_rate_ms: 0, on_ground: false, position_age_s: 0,
+      });
+      Object.assign(window, { __mockDump1090Response: { aircraft: [plane("NEAR", 1.05), plane("MID", 2)] } });
+    });
+    await page.goto("/");
+    const list = page.getByRole("list", { name: "Aircraft list" });
+    await expect(list.getByRole("listitem").first()).toContainText("MID");
+    await list.getByRole("listitem").first().click();
+    const sourceBefore = await page.evaluate(() => ({
+      requests: Reflect.get(window, "__mockDump1090Requests").length,
+      stops: Reflect.get(window, "__mockDump1090Stops") ?? 0,
+    }));
+    await page.evaluate(() => Object.assign(window, { __mockDump1090Response: { aircraft: [] } }));
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("combobox", { name: "Best-path ranking", exact: true }).selectOption("range-product");
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(list.getByRole("listitem").first()).toContainText("NEAR");
+    await expect(list).toContainText("dB");
+    await expect(page.getByRole("button", { name: "Auto", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => ({
+      requests: Reflect.get(window, "__mockDump1090Requests").length,
+      stops: Reflect.get(window, "__mockDump1090Stops") ?? 0,
+    }))).toEqual(sourceBefore);
   });
 });

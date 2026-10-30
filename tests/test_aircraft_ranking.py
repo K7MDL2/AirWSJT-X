@@ -148,6 +148,35 @@ class AircraftRankingTests(unittest.TestCase):
                 patch.dict(bridge._aircraft_filters, {"ranking_method": "range-product"}):
             self.assertIsNone(bridge._select_auto_lock_candidate([PLANE]))
 
+    def test_update_uses_one_policy_when_filters_change_during_ranking(self):
+        middle = replace(PLANE, icao24="middle", lon=1)
+        methods = []
+
+        def rank_and_change_policy(ac, a, b, method, score, now):
+            methods.append(method)
+            bridge._aircraft_filters = {**bridge._DEFAULT_FILTERS, "ranking_method": "legacy"}
+            return rank_geometry(ac, a, b, method, score, now)
+
+        with patch.multiple(
+            bridge, _station_a_locator="A", _station_b_locator="B",
+            _station_a_alt_m=A[2], _station_b_alt_m=B[2], _locked_aircraft_id=None,
+            _aircraft_filters={**bridge._DEFAULT_FILTERS, "ranking_method": "range-product"},
+        ), patch.object(bridge, "locator_to_latlon", side_effect=lambda grid: A[:2] if grid == "A" else B[:2]), \
+                patch.object(bridge, "_current_aircraft_snapshot", return_value=[PLANE, middle]), \
+                patch.object(bridge, "_aircraft_matches_filters", return_value=True), \
+                patch.object(bridge.time, "time", return_value=NOW), \
+                patch.object(bridge, "rank_geometry", side_effect=rank_and_change_policy), \
+                patch.object(bridge, "_try_auto_lock") as auto_lock, \
+                patch.object(bridge, "_emit") as emit:
+            bridge._emit_aircraft_update()
+            payload = emit.call_args.args[0]["data"]
+            self.assertEqual(methods, ["range-product"] * 4)
+            self.assertEqual(payload["ranking_method"], "range-product")
+            for key in ("aircraft", "flight_data"):
+                self.assertEqual([row["icao24"] for row in payload[key]], ["near", "middle"])
+                self.assertGreater(payload[key][0]["ranking_value"], 1)
+            self.assertEqual(auto_lock.call_args.kwargs["filters"]["ranking_method"], "range-product")
+
     def test_method_persistence_and_invalid_rpc(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "filters.json")

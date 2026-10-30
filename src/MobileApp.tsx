@@ -1,5 +1,5 @@
 import { watchGpsAltitude } from "./lib/gps";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   locatorToLatlon,
   bearingDeg,
@@ -268,7 +268,7 @@ function loadSettings(): MobileSettings {
 export default function MobileApp() {
   const [settings, setSettings] = useState<MobileSettings>(loadSettings);
   const [showSettings, setShowSettings] = useState(false);
-  const [aircraft, setAircraft] = useState<MobileAircraft[]>([]);
+  const [rawAircraft, setRawAircraft] = useState<Aircraft[]>([]);
   const [selectedAc, setSelectedAc] = useState<MobileAircraft | null>(null);
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null);
   const [compassPermissionState, setCompassPermissionState] = useState<CompassPermissionState>("unsupported");
@@ -313,6 +313,62 @@ export default function MobileApp() {
 
   const hasStation = settings.myGrid.length >= 4;
   const isLandscape = viewport.width > viewport.height;
+  const path = useMemo(() => {
+    try {
+      const [myLat, myLon] = locatorToLatlon(settings.myGrid);
+      let dxLat = myLat, dxLon = myLon;
+      try {
+        if (settings.dxGrid?.trim()) [dxLat, dxLon] = locatorToLatlon(settings.dxGrid.trim());
+      } catch {
+        dxLat = myLat;
+        dxLon = myLon;
+      }
+      const hasPath = haversineKm(myLat, myLon, dxLat, dxLon) > 0.001;
+      return { myLat, myLon, dxLat, dxLon, hasPath,
+        pathBearing: hasPath ? bearingDeg(myLat, myLon, dxLat, dxLon) : 0 };
+    } catch {
+      return null;
+    }
+  }, [settings.myGrid, settings.dxGrid]);
+  const aircraft = useMemo(() => {
+    if (!path) return [];
+    const { myLat, myLon, dxLat, dxLon, hasPath, pathBearing } = path;
+    const method = settings.rankingMethod ?? "legacy";
+    const now = Date.now() / 1000;
+    const mapped: MobileAircraft[] = rawAircraft.filter(
+      a => a.lat != null && a.lon != null && a.altitude_m != null && a.altitude_m > 0 && !a.on_ground,
+    ).filter(a => !hasPath
+      || headingDeltaDeg(bearingDeg(myLat, myLon, a.lat!, a.lon!), pathBearing) <= PATH_TOLERANCE_DEG)
+      .map(a => {
+        const dist = haversineKm(myLat, myLon, a.lat!, a.lon!);
+        const az = bearingDeg(myLat, myLon, a.lat!, a.lon!);
+        const el = elevationDeg(dist, a.altitude_m!, stationAltRef.current);
+        const range = slantRangeKm(dist, a.altitude_m!, stationAltRef.current);
+        const scatter = scatterGeometry(myLat, myLon, dxLat, dxLon, a.lat!, a.lon!, a.altitude_m!, stationAltRef.current);
+        const ranking = rankGeometry({
+          lat: a.lat!, lon: a.lon!, altitude_ft: a.altitude_m! / 0.3048,
+          heading_deg: a.heading_deg, velocity_kts: a.velocity_ms == null ? null : a.velocity_ms * 3600 / 1852,
+          position_updated_epoch_s: a.position_updated_epoch_s,
+        }, { lat: myLat, lon: myLon, altitudeM: stationAltRef.current },
+        { lat: dxLat, lon: dxLon, altitudeM: 0 }, method, scatter.scatter_score, now);
+        return {
+          ...ranking,
+          icao24: a.icao24,
+          callsign: a.callsign || a.icao24,
+          lat: a.lat!, lon: a.lon!,
+          altitude_ft: Math.round(a.altitude_m! * 3.28084),
+          heading_deg: a.heading_deg,
+          velocity_kts: a.velocity_ms != null ? Math.round(a.velocity_ms * 1.94384) : null,
+          az: Math.round(az * 10) / 10,
+          el: Math.round(el * 10) / 10,
+          range_km: Math.round(range * 10) / 10,
+          distance_km: Math.round(dist * 10) / 10,
+          scatter_score: scatter.scatter_score,
+        };
+      });
+    mapped.sort((a, b) => compareRanking(a, b, method) || a.distance_km - b.distance_km);
+    return mapped;
+  }, [rawAircraft, path, settings.rankingMethod]);
   const trackedAc = selectedAc ?? aircraft[0] ?? null;
 
   const enableCompass = useCallback(async () => {
@@ -417,37 +473,22 @@ export default function MobileApp() {
     pollerRef.current = null;
 
     if (!hasStation) {
-      setAircraft([]);
+      setRawAircraft([]);
       setStatus("Configure your station grid");
       return;
     }
 
-    let myLat: number, myLon: number;
-    try {
-      [myLat, myLon] = locatorToLatlon(settings.myGrid);
-    } catch {
+    if (!path) {
       setStatus("Invalid grid locator");
       return;
     }
-
-    // Without a valid, distinct DX grid the path filter is skipped.
-    let dxLat = myLat, dxLon = myLon, hasPath = false;
-    const dxGrid = (settings.dxGrid ?? "").trim();
-    if (dxGrid) {
-      try {
-        [dxLat, dxLon] = locatorToLatlon(dxGrid);
-        hasPath = haversineKm(myLat, myLon, dxLat, dxLon) > 0.001;
-      } catch {
-        hasPath = false;
-      }
-    }
-    const pathBearing = hasPath ? bearingDeg(myLat, myLon, dxLat, dxLon) : 0;
+    const { myLat, myLon, hasPath, pathBearing } = path;
 
     const bbox = 3;
     const source = settings.aircraftSource ?? "opensky";
     const dumpHost = (settings.dump1090Host ?? "").trim();
     if (source === "dump1090" && !dumpHost) {
-      setAircraft([]);
+      setRawAircraft([]);
       setStatus("Enter the dump1090 address in Settings");
       return;
     }
@@ -465,47 +506,15 @@ export default function MobileApp() {
       onUpdate: (raw: Aircraft[]) => {
         const withPos = raw.filter(
           (a) => a.lat != null && a.lon != null && a.altitude_m != null && a.altitude_m > 0 && !a.on_ground,
-        );
-        const mapped: MobileAircraft[] = withPos
-          .filter((a) => !hasPath
-            || headingDeltaDeg(bearingDeg(myLat, myLon, a.lat!, a.lon!), pathBearing) <= PATH_TOLERANCE_DEG)
-          .map((a) => {
-          const dist = haversineKm(myLat, myLon, a.lat!, a.lon!);
-          const az = bearingDeg(myLat, myLon, a.lat!, a.lon!);
-          const el = elevationDeg(dist, a.altitude_m!, stationAltRef.current);
-          const range = slantRangeKm(dist, a.altitude_m!, stationAltRef.current);
-          const scatter = scatterGeometry(myLat, myLon, dxLat, dxLon, a.lat!, a.lon!, a.altitude_m!, stationAltRef.current);
-          const ranking = rankGeometry({
-            lat: a.lat!, lon: a.lon!, altitude_ft: a.altitude_m! / 0.3048,
-            heading_deg: a.heading_deg, velocity_kts: a.velocity_ms == null ? null : a.velocity_ms * 3600 / 1852,
-            position_updated_epoch_s: a.position_updated_epoch_s,
-          }, { lat: myLat, lon: myLon, altitudeM: stationAltRef.current },
-          { lat: dxLat, lon: dxLon, altitudeM: 0 },
-          settings.rankingMethod ?? "legacy", scatter.scatter_score, Date.now() / 1000);
-          return {
-            ...ranking,
-            icao24: a.icao24,
-            callsign: a.callsign || a.icao24,
-            lat: a.lat!,
-            lon: a.lon!,
-            altitude_ft: Math.round(a.altitude_m! * 3.28084),
-            heading_deg: a.heading_deg,
-            velocity_kts: a.velocity_ms != null ? Math.round(a.velocity_ms * 1.94384) : null,
-            az: Math.round(az * 10) / 10,
-            el: Math.round(el * 10) / 10,
-            range_km: Math.round(range * 10) / 10,
-            distance_km: Math.round(dist * 10) / 10,
-            scatter_score: scatter.scatter_score,
-          };
-        });
-        mapped.sort((a, b) => compareRanking(a, b, settings.rankingMethod ?? "legacy") || a.distance_km - b.distance_km);
-        setAircraft(mapped);
+        ).filter(a => !hasPath
+          || headingDeltaDeg(bearingDeg(myLat, myLon, a.lat!, a.lon!), pathBearing) <= PATH_TOLERANCE_DEG);
+        setRawAircraft(raw);
         setLastUpdate(Date.now());
         setStatus(source === "dump1090"
           ? raw.length === 0
             ? "dump1090 connected — no aircraft received"
-            : `dump1090: ${raw.length} received, ${mapped.length} with position`
-          : `${mapped.length} aircraft in range`);
+            : `dump1090: ${raw.length} received, ${withPos.length} with position`
+          : `${withPos.length} aircraft in range`);
       },
       onError: (msg) => setStatus(`Error: ${msg}`),
       onRateLimited: (ms) => setStatus(`Rate limited — retry in ${Math.round(ms / 1000)}s`),
@@ -527,7 +536,7 @@ export default function MobileApp() {
       }).catch(() => { if (!disposed) setStatus("Cannot read secure aircraft account settings"); });
 
     return () => { disposed = true; poller.stop(); };
-  }, [hasStation, settings.myGrid, settings.dxGrid, settings.aircraftSource, settings.dump1090Host, settings.rankingMethod, accountRevision]);
+  }, [hasStation, path, settings.aircraftSource, settings.dump1090Host, accountRevision]);
 
   // GPS altitude feeds the station height used for elevation/range
   useEffect(() => watchGpsAltitude((alt) => { stationAltRef.current = alt ?? 0; }), []);

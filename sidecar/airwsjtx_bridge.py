@@ -1156,7 +1156,7 @@ def _do_unlock() -> None:
     _emit({"event": "plane_unlocked", "data": {}})
 
 
-def _select_auto_lock_candidate(aircraft: list[Aircraft]) -> Aircraft | None:
+def _select_auto_lock_candidate(aircraft: list[Aircraft], *, filters: dict | None = None) -> Aircraft | None:
     """Return the best candidate using the same filtered geometry path as the UI."""
     if not _station_a_locator or not _station_b_locator:
         return None
@@ -1169,10 +1169,11 @@ def _select_auto_lock_candidate(aircraft: list[Aircraft]) -> Aircraft | None:
 
     best_ac: Aircraft | None = None
     best_key: tuple | None = None
-    method = _aircraft_filters.get("ranking_method", "legacy")
+    filters = dict(_aircraft_filters) if filters is None else filters
+    method = filters.get("ranking_method", "legacy")
     now = time.time()
     for ac in aircraft:
-        if not ac.has_position or not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b):
+        if not ac.has_position or not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b, filters=filters):
             continue
         geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon, ac.altitude_m, _station_a_alt_m, _station_b_alt_m)  # type: ignore[arg-type]
         score = float(geo.get("scatter_score", 0.0))
@@ -1186,7 +1187,7 @@ def _select_auto_lock_candidate(aircraft: list[Aircraft]) -> Aircraft | None:
     return best_ac
 
 
-def _try_auto_lock(aircraft: list[Aircraft]) -> None:
+def _try_auto_lock(aircraft: list[Aircraft], *, filters: dict | None = None) -> None:
     """Called on every aircraft update. Auto-locks the best plane if enabled."""
     if not _auto_lock_enabled:
         return
@@ -1196,7 +1197,7 @@ def _try_auto_lock(aircraft: list[Aircraft]) -> None:
                                          SessionState.ABORTED):
         return
 
-    best_ac = _select_auto_lock_candidate(aircraft)
+    best_ac = _select_auto_lock_candidate(aircraft, filters=filters)
     if best_ac:
         _do_lock(best_ac.icao24)
 
@@ -1311,18 +1312,20 @@ def _start_dump1090_feed(host: str, port: int) -> None:
     _dump1090_feed.start()
 
 
-def _matches_priority_flight(ac: Aircraft) -> bool:
-    priority_flight = str(_aircraft_filters.get("priority_flight") or "").strip().upper()
+def _matches_priority_flight(ac: Aircraft, *, filters: dict | None = None) -> bool:
+    filters = _aircraft_filters if filters is None else filters
+    priority_flight = str(filters.get("priority_flight") or "").strip().upper()
     return bool(priority_flight and ac.callsign and ac.callsign.strip().upper() == priority_flight)
 
 
-def _aircraft_matches_filters(ac: Aircraft, lat_a: float, lon_a: float, lat_b: float, lon_b: float) -> bool:
+def _aircraft_matches_filters(ac: Aircraft, lat_a: float, lon_a: float, lat_b: float, lon_b: float,
+                              *, filters: dict | None = None) -> bool:
     if ac.lat is None or ac.lon is None or ac.altitude_m is None:
         return False
 
-    filters = dict(_aircraft_filters)
+    filters = dict(_aircraft_filters) if filters is None else filters
     priority_flight = str(filters.get("priority_flight") or "").strip().upper()
-    matches_priority_flight = _matches_priority_flight(ac)
+    matches_priority_flight = _matches_priority_flight(ac, filters=filters)
     if filters.get("priority_flight_exclusive") and priority_flight:
         return matches_priority_flight
     if matches_priority_flight:
@@ -1368,55 +1371,14 @@ def _aircraft_matches_filters(ac: Aircraft, lat_a: float, lon_a: float, lat_b: f
 
 def _get_scatter_aircraft() -> list[dict]:
     """Compute scatter geometry for all cached aircraft and return sorted list."""
-    snapshot = _current_aircraft_snapshot()
-    if not _station_a_locator:
-        return []
-    try:
-        lat_a, lon_a = locator_to_latlon(_station_a_locator)
-    except Exception:
-        return []
-    lat_b, lon_b = None, None
-    if _station_b_locator:
-        try:
-            lat_b, lon_b = locator_to_latlon(_station_b_locator)
-        except Exception:
-            pass
-
-    if lat_b is None or lon_b is None:
-        lat_b = lat_a
-        lon_b = lon_a
-
-    results = []
-    for ac in snapshot:
-        if not ac.has_position:
-            continue
-        geo = scatter_geometry(
-            lat_a, lon_a,
-            lat_b, lon_b,
-            ac.lat, ac.lon, ac.altitude_m,  # type: ignore[arg-type]
-            _station_a_alt_m,
-            _station_b_alt_m,
-        )
-        if not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b):
-            continue
-        results.append({
-            "icao24": ac.icao24,
-            "callsign": ac.callsign or ac.icao24,
-            "lat": round(ac.lat, 4),       # type: ignore[arg-type]
-            "lon": round(ac.lon, 4),       # type: ignore[arg-type]
-            "altitude_m": round(ac.altitude_m),  # type: ignore[arg-type]
-            "altitude_ft": round(ac.altitude_m * 3.28084),  # type: ignore[arg-type]
-            "velocity_kts": round(ac.velocity_ms * 1.94384) if ac.velocity_ms else None,
-            "heading_deg": round(ac.heading_deg) if ac.heading_deg is not None else None,
-            **geo,
-            **_ranking_for_aircraft(ac, lat_a, lon_a, lat_b, lon_b, geo["scatter_score"]),
-        })
-
-    results.sort(key=_aircraft_ranking_key, reverse=True)
-    return results
+    return _get_scatter_aircraft_with_total()[0]
 
 
-def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[list[dict], int]:
+def _get_scatter_aircraft_with_total(*, apply_filters: bool = True, filters: dict | None = None,
+                                    now: float | None = None) -> tuple[list[dict], int]:
+    filters = dict(_aircraft_filters) if filters is None else filters
+    method = filters.get("ranking_method", "legacy")
+    now = time.time() if now is None else now
     snapshot = _current_aircraft_snapshot()
     if not _station_a_locator:
         return [], 0
@@ -1442,7 +1404,7 @@ def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[lis
             continue
         total += 1
         geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon, ac.altitude_m, _station_a_alt_m, _station_b_alt_m)  # type: ignore[arg-type]
-        if apply_filters and not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b):
+        if apply_filters and not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b, filters=filters):
             continue
         results.append({
             "icao24": ac.icao24,
@@ -1454,29 +1416,21 @@ def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[lis
             "velocity_kts": round(ac.velocity_ms * 1.94384) if ac.velocity_ms else None,
             "heading_deg": round(ac.heading_deg) if ac.heading_deg is not None else None,
             **geo,
-            **_ranking_for_aircraft(ac, lat_a, lon_a, lat_b, lon_b, geo["scatter_score"]),
+            **rank_geometry(ac, (lat_a, lon_a, _station_a_alt_m),
+                            (lat_b, lon_b, _station_b_alt_m), method, geo["scatter_score"], now),
         })
 
-    results.sort(key=_aircraft_ranking_key, reverse=True)
+    results.sort(key=lambda row: ranking_key(row["scatter_score"], row, method), reverse=True)
     return results, total
 
 
-def _ranking_for_aircraft(ac: Aircraft, lat_a: float, lon_a: float, lat_b: float,
-                          lon_b: float, score: float) -> dict:
-    return rank_geometry(ac, (lat_a, lon_a, _station_a_alt_m),
-                         (lat_b, lon_b, _station_b_alt_m),
-                         _aircraft_filters.get("ranking_method", "legacy"), score, time.time())
-
-
-def _aircraft_ranking_key(row: dict) -> tuple:
-    return ranking_key(row["scatter_score"], row, _aircraft_filters.get("ranking_method", "legacy"))
-
-
 def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
+    filters = dict(_aircraft_filters)
+    now = time.time()
     age_s = _aircraft_cache_age_s()
     freshness = _aircraft_cache_freshness(age_s)
-    aircraft, total = _get_scatter_aircraft_with_total()
-    flight_data, _ = _get_scatter_aircraft_with_total(apply_filters=False)
+    aircraft, total = _get_scatter_aircraft_with_total(filters=filters, now=now)
+    flight_data, _ = _get_scatter_aircraft_with_total(apply_filters=False, filters=filters, now=now)
     visible_aircraft = aircraft[:20]
     if _locked_aircraft_id:
         locked = next((ac for ac in aircraft[20:] if ac["icao24"] == _locked_aircraft_id), None)
@@ -1500,7 +1454,7 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
             "last_update_epoch_s": last_update_epoch_s,
             "cache_age_s": round(age_s, 1) if age_s is not None else None,
             "data_freshness": freshness,
-            "ranking_method": _aircraft_filters.get("ranking_method", "legacy"),
+            "ranking_method": filters.get("ranking_method", "legacy"),
         },
     })
     # Update tracking or try auto-lock
@@ -1511,7 +1465,7 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
         else:
             _do_unlock()
     elif try_auto_lock:
-        _try_auto_lock(snapshot)
+        _try_auto_lock(snapshot, filters=filters)
 
 
 def _on_wsjtx_status(st: WSJTXStatus) -> None:
