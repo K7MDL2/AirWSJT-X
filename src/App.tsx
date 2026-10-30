@@ -16,6 +16,7 @@ import { bearingDeg, haversineKm, isValidLocator, locatorToLatlon } from "./lib/
 import SkyDome from "./SkyDome";
 import { isSpeechSupported, speak, cancelSpeech } from "./lib/speech";
 import { formatUsableTime, predictUsableTime } from "./lib/usableTime";
+import { RANKING_OPTIONS, isRankingMethod, formatRanking, type AircraftRanking, type RankingMethod } from "./lib/aircraftRanking";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,7 +68,7 @@ function isWsjtxRig(value: unknown): value is WsjtxRig {
     && "config_name" in value
     && (value.config_name === null || typeof value.config_name === "string");
 }
-interface AircraftEntry {
+interface AircraftEntry extends Partial<AircraftRanking> {
   icao24: string;
   callsign: string;
   lat: number;
@@ -85,6 +86,7 @@ interface AircraftEntry {
   scatter_score: number;
 }
 interface AirscoutUpdate {
+  ranking_method?: RankingMethod;
   aircraft: AircraftEntry[];
   flight_data?: AircraftEntry[];
   total: number;
@@ -124,6 +126,7 @@ interface CallsignDbStatus {
 }
 
 interface AircraftFilterSettings {
+  ranking_method: RankingMethod;
   lat_min: number | null;
   lat_max: number | null;
   lon_min: number | null;
@@ -145,6 +148,7 @@ type NumericAircraftFilterKey =
   | "position_tolerance_deg";
 
 const DEFAULT_AIRCRAFT_FILTERS: AircraftFilterSettings = {
+  ranking_method: "legacy",
   lat_min: null,
   lat_max: null,
   lon_min: null,
@@ -174,6 +178,7 @@ function loadAircraftFilters(stationA: string | null | undefined, stationB: stri
     if (!raw) return DEFAULT_AIRCRAFT_FILTERS;
     const parsed = JSON.parse(raw) as Partial<AircraftFilterSettings>;
     return {
+      ranking_method: isRankingMethod(parsed.ranking_method) ? parsed.ranking_method : "legacy",
       lat_min: parsed.lat_min ?? null,
       lat_max: parsed.lat_max ?? null,
       lon_min: parsed.lon_min ?? null,
@@ -527,6 +532,8 @@ export default function App() {
   const overlayRef = useRef<HTMLDivElement>(null);
   const overlayDragRef = useRef<{ dx: number; dy: number } | null>(null);
   const [aircraftFilters, setAircraftFilters] = useState<AircraftFilterSettings>(() => loadAircraftFilters(null, null));
+  const confirmedAircraftFiltersRef = useRef(aircraftFilters);
+  const aircraftFilterRequestRef = useRef(0);
   const [aircraftFilterDraft, setAircraftFilterDraft] = useState<{ key: NumericAircraftFilterKey; value: string } | null>(null);
   const activeFlightRef = useRef({ priority_flight: "", priority_flight_exclusive: false });
   const [callsignDbStatus, setCallsignDbStatus] = useState<CallsignDbStatus | null>(null);
@@ -942,8 +949,11 @@ export default function App() {
   })();
   const stateColor = STATE_COLOR[displayState] ?? "#8b949e";
   const aircraft = airscout?.aircraft ?? [];
-  const flightData = useMemo(() => [...(airscout?.flight_data ?? [])]
-    .sort((a, b) => b.scatter_score - a.scatter_score), [airscout?.flight_data]);
+  const flightData = useMemo(() => {
+    const rows = [...(airscout?.flight_data ?? [])];
+    return !airscout?.ranking_method || airscout.ranking_method === "legacy"
+      ? rows.sort((a, b) => b.scatter_score - a.scatter_score) : rows;
+  }, [airscout?.flight_data, airscout?.ranking_method]);
   const usableTimes = useMemo(() => {
     const station = (grid: string | null | undefined, altitudeM: number | undefined) => {
       if (!isValidLocator(grid) || altitudeM === undefined) return null;
@@ -1032,15 +1042,33 @@ export default function App() {
       heading_tolerance_deg: Number.isFinite(nextFilters.heading_tolerance_deg) ? nextFilters.heading_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.heading_tolerance_deg,
       position_tolerance_deg: Number.isFinite(nextFilters.position_tolerance_deg) ? nextFilters.position_tolerance_deg : DEFAULT_AIRCRAFT_FILTERS.position_tolerance_deg,
     };
+    const storageKey = getAircraftFilterStorageKey(airscout?.station_a, airscout?.station_b);
+    const request = ++aircraftFilterRequestRef.current;
     activeFlightRef.current = {
       priority_flight: normalized.priority_flight,
       priority_flight_exclusive: normalized.priority_flight_exclusive,
     };
-    const storageKey = getAircraftFilterStorageKey(airscout?.station_a, airscout?.station_b);
-    localStorage.setItem(storageKey, JSON.stringify(normalized));
     setAircraftFilters(normalized);
     rpc("airscout_apply_filters", { filters: normalized })
-      .catch((e) => addLog(`Aircraft filter update: ${e}`));
+      .then(() => {
+        confirmedAircraftFiltersRef.current = normalized;
+        try {
+          localStorage.setItem(storageKey, JSON.stringify(normalized));
+        } catch (e) {
+          addLog(`Aircraft filter storage: ${e}`);
+        }
+      })
+      .catch((e) => {
+        if (request === aircraftFilterRequestRef.current) {
+          const confirmed = confirmedAircraftFiltersRef.current;
+          setAircraftFilters(confirmed);
+          activeFlightRef.current = {
+            priority_flight: confirmed.priority_flight,
+            priority_flight_exclusive: confirmed.priority_flight_exclusive,
+          };
+        }
+        addLog(`Aircraft filter update: ${e}`);
+      });
   }, [airscout?.station_a, airscout?.station_b, addLog]);
 
   const storeFlight = () => {
@@ -1207,9 +1235,8 @@ export default function App() {
       ...loadAircraftFilters(airscout?.station_a, airscout?.station_b),
       ...activeFlightRef.current,
     };
-    setAircraftFilters(stored);
-    rpc("airscout_apply_filters", { filters: stored }).catch(e => addLog(`Aircraft filter restore: ${e}`));
-  }, [airscout?.station_a, airscout?.station_b]);
+    persistAircraftFilters(stored);
+  }, [airscout?.station_a, airscout?.station_b, persistAircraftFilters]);
 
   function savePortableGrid(callsign: string | null, grid: string | null) {
     if (!callsign) return;
@@ -1883,11 +1910,8 @@ export default function App() {
               onLockAircraft={(icao24) => rpc("lock_aircraft", { icao24 }).catch(e => addLog(`Lock: ${e}`))}
               sourceStatusText={activeSource ? `${activeSource} ${activeSourceState}` : undefined}
               priorityFlight={aircraftFilters.priority_flight}
-              aircraft={aircraft.slice(0, 5).map(ac => ({
-                icao24: ac.icao24, callsign: ac.callsign, altitude_ft: ac.altitude_ft,
-                scatter_score: ac.scatter_score, az_a: ac.az_a, el_a: ac.el_a,
-                az_b: ac.az_b, el_b: ac.el_b, off_path_deg: ac.off_path_deg,
-              }))}
+              rankingMethod={airscout?.ranking_method}
+              aircraft={aircraft.slice(0, 5)}
             />
           </div>
         </div>
@@ -2055,6 +2079,21 @@ export default function App() {
               </span>}
             </h3>
             <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 6 }}>
+                <span>Best-path ranking</span>
+                <DarkSelect ariaLabel="Best-path ranking" value={aircraftFilters.ranking_method}
+                  width={230} popupWidth={280} options={[...RANKING_OPTIONS]}
+                  onChange={value => {
+                    if (isRankingMethod(value)) {
+                      persistAircraftFilters({ ...aircraftFilters, ranking_method: value });
+                    }
+                  }} />
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-muted)" }}>
+                Score remains legacy geometry, not SNR. Ranking changes selection order, not active locks.
+                {aircraftFilters.ranking_method === "window-product"
+                  && " Known fresh windows rank first; unavailable windows use range fallback. Constant motion, 30-minute cap."}
+              </div>
               <details className="aircraft-filters">
                 <summary>Filters</summary>
                 <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "4px 0" }}>
@@ -2317,6 +2356,7 @@ export default function App() {
                 <thead>
                   <tr>
                     <th>Call</th><th>FL</th><th>Score</th>
+                    {airscout?.ranking_method && airscout.ranking_method !== "legacy" && <th>Rank</th>}
                     <th title="Feed-reported aircraft ground-track direction, degrees clockwise from true north">HDG°</th>
                     <th>AZ-A</th><th>EL-A</th><th>Off°</th><th>km</th>
                     <th title="Estimated usable time remaining from the latest aircraft report (m:ss). Above both radio horizons and inside both 90° path boundaries; ignores optional filters and score. Constant altitude, ground speed and great-circle track; 30-minute limit. Not a signal-quality guarantee.">Use</th>
@@ -2339,6 +2379,17 @@ export default function App() {
                         </td>
                         <td>{Math.round(ac.altitude_ft / 100)}</td>
                         <td style={{ color: scColor, fontWeight: 600 }}>{(sc * 100).toFixed(0)}%</td>
+                        {airscout?.ranking_method && airscout.ranking_method !== "legacy" && (
+                          <td title={ac.ranking_reason}>
+                            {formatRanking({
+                              ranking_value: ac.ranking_value ?? null,
+                              range_gain_db: ac.range_gain_db ?? null,
+                              ranking_reason: ac.ranking_reason ?? "Ranking unavailable",
+                              ranking_window_s: ac.ranking_window_s ?? null,
+                              ranking_window_capped: ac.ranking_window_capped ?? false,
+                            }, airscout.ranking_method)}
+                          </td>
+                        )}
                         <td title={ac.heading_deg == null ? "Aircraft heading not reported" : "Feed-reported ground-track direction"}>
                           {ac.heading_deg == null ? "—" : `${Math.round(ac.heading_deg) % 360}°`}
                         </td>

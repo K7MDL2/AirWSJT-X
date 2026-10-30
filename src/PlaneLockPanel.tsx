@@ -1,3 +1,5 @@
+import { formatRanking, type RankingMethod } from "./lib/aircraftRanking";
+
 interface LockState {
   icao24: string;
   callsign: string;
@@ -27,7 +29,10 @@ interface PlaneLockPanelProps {
     icao24: string; callsign: string; altitude_ft: number;
     scatter_score: number; az_a: number; el_a: number;
     az_b: number; el_b: number; off_path_deg: number;
+    ranking_value?: number | null; ranking_reason?: string; range_gain_db?: number | null;
+    ranking_window_s?: number | null; ranking_window_capped?: boolean;
   }[];
+  rankingMethod?: RankingMethod;
   sourceStatusText?: string;
   priorityFlight?: string;
   nowEpochS: number;
@@ -99,6 +104,7 @@ export default function PlaneLockPanel({
   locked, autoLock, sessionState, onAutoLockToggle, onUnlock, onLockAircraft, aircraft,
   sourceStatusText,
   priorityFlight = "",
+  rankingMethod = "legacy",
   nowEpochS,
   pollIntervalS,
 }: PlaneLockPanelProps) {
@@ -278,6 +284,16 @@ export default function PlaneLockPanel({
                     textAlign: "center" }}>
                     {(ac.scatter_score * 100).toFixed(0)}%
                   </span>
+                  {rankingMethod !== "legacy" && (
+                    <span title={ac.ranking_reason} style={{ gridColumn: "2 / 5", fontSize: 11, color: "#8b949e" }}>
+                      Rank {formatRanking({
+                        ranking_value: ac.ranking_value ?? null, range_gain_db: ac.range_gain_db ?? null,
+                        ranking_reason: ac.ranking_reason ?? "Unavailable",
+                        ranking_window_s: ac.ranking_window_s ?? null,
+                        ranking_window_capped: ac.ranking_window_capped ?? false,
+                      }, rankingMethod)}
+                    </span>
+                  )}
                   <span style={{ color: "#8b949e", fontFamily: "monospace", gridColumn: "2 / 4" }}>
                     AZ/EL {ac.az_a.toFixed(0)}°/{ac.el_a.toFixed(0)}°
                   </span>

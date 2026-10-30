@@ -73,7 +73,7 @@ class AirscoutBridgeCacheTests(unittest.TestCase):
                 patch.object(airwsjtx_bridge, "_try_auto_lock") as auto_lock, \
                 patch.object(airwsjtx_bridge, "_emit"):
             airwsjtx_bridge._emit_aircraft_update()
-            auto_lock.assert_called_once_with([])
+            auto_lock.assert_called_once_with([], filters=airwsjtx_bridge._aircraft_filters)
 
     def test_station_filter_and_source_changes_emit_aircraft_update(self) -> None:
         with patch.multiple(airwsjtx_bridge, _station_a_locator="CN87", _station_b_locator="CN89",
