@@ -104,6 +104,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     const mock = window as unknown as Record<string, unknown>;
     mock.__mockAircraftRequests = [...(mock.__mockAircraftRequests as unknown[] ?? []), args];
     if (mock.__mockAircraftRateLimited) throw "RATE_LIMITED:1800";
+    if (mock.__mockMobileResponse) return mock.__mockMobileResponse;
     if (mock.__mockMobileStates) return { states: mock.__mockMobileStates };
     return args?.provider === "adsbexchange"
       ? { ac: [{ hex: "abc123", flight: "MOBILE", lat: 47.5, lon: -122, alt_geom: 30000, gs: 200, track: 90 }] }
@@ -116,6 +117,7 @@ export async function invoke(cmd: string, args?: Record<string, unknown>): Promi
     return { aircraft: [{
       icao24: "abc123", callsign: "DUMP1090", lat: 47.5, lon: -122, altitude_m: 9000,
       velocity_ms: 200, heading_deg: 90, vertical_rate_ms: 0, on_ground: false,
+      position_age_s: mock.__mockDump1090PositionAge ?? null,
     }] };
   }
 

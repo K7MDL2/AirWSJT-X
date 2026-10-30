@@ -30,6 +30,7 @@ from airwsjtx.callsign import (
 from airwsjtx.geo import bearing_deg, haversine_km, heading_delta_deg, heading_within_tolerance, locator_to_latlon, scatter_geometry
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
+from airwsjtx.ranking import RANKING_METHODS, rank_geometry, ranking_key
 from airwsjtx.supervisor import AirWSJTXSupervisor
 from airwsjtx.tracking import build_track, select_best_aircraft
 from airwsjtx.wsjtx_udp import WSJTXDecode, WSJTXListener, WSJTXQsoLogged, WSJTXStatus
@@ -93,6 +94,7 @@ _rotator_control_enabled: bool = True
 
 # Aircraft display filters
 _DEFAULT_FILTERS = {
+    "ranking_method": "legacy",
     "lat_min": None,
     "lat_max": None,
     "lon_min": None,
@@ -149,6 +151,8 @@ def _read_filters() -> dict[str, float | str | bool | None]:
             data = json.load(fh)
         if isinstance(data, dict):
             result = dict(_DEFAULT_FILTERS)
+            if data.get("ranking_method") in RANKING_METHODS:
+                result["ranking_method"] = data["ranking_method"]
             for key in ("lat_min", "lat_max", "lon_min", "lon_max", "altitude_min_ft",
                         "heading_tolerance_deg", "position_tolerance_deg"):
                 if key in data:
@@ -161,16 +165,13 @@ def _read_filters() -> dict[str, float | str | bool | None]:
 
 
 def _write_filters(filters: dict[str, float | str | bool | None]) -> None:
-    try:
-        payload = {
-            key: value if key in ("priority_flight", "priority_flight_exclusive")
-            else (None if value is None else float(value))
-            for key, value in filters.items()
-        }
-        with open(_aircraft_filter_path(), "w", encoding="utf-8") as fh:
-            json.dump(payload, fh)
-    except Exception:
-        pass
+    payload = {
+        key: value if key in ("priority_flight", "priority_flight_exclusive", "ranking_method")
+        else (None if value is None else float(value))
+        for key, value in filters.items()
+    }
+    with open(_aircraft_filter_path(), "w", encoding="utf-8") as fh:
+        json.dump(payload, fh)
 
 
 _DEFAULT_DUMP1090_HOST = "127.0.0.1"
@@ -537,6 +538,11 @@ def handle(msg: dict) -> None:
                 _err(id_, "filters object required")
                 return
             next_filters = dict(_DEFAULT_FILTERS)
+            ranking_method = raw_filters.get("ranking_method", "legacy")
+            if ranking_method not in RANKING_METHODS:
+                _err(id_, "Unknown aircraft ranking method")
+                return
+            next_filters["ranking_method"] = ranking_method
             for key in ("lat_min", "lat_max", "lon_min", "lon_max", "altitude_min_ft",
                         "heading_tolerance_deg", "position_tolerance_deg"):
                 if key in raw_filters:
@@ -553,8 +559,8 @@ def handle(msg: dict) -> None:
             next_filters["priority_flight"] = priority_flight.strip().upper()
             next_filters["priority_flight_exclusive"] = exclusive
             global _aircraft_filters
+            _write_filters(next_filters)
             _aircraft_filters = next_filters
-            _write_filters(_aircraft_filters)
             _emit({"event": "airscout_filters_updated", "data": {"filters": dict(next_filters)}})
             _emit_aircraft_update(try_auto_lock=False)
             _ok(id_, {"filters": dict(next_filters)})
@@ -1162,14 +1168,19 @@ def _select_auto_lock_candidate(aircraft: list[Aircraft]) -> Aircraft | None:
         return None
 
     best_ac: Aircraft | None = None
-    best_score = 0.0
+    best_key: tuple | None = None
+    method = _aircraft_filters.get("ranking_method", "legacy")
+    now = time.time()
     for ac in aircraft:
         if not ac.has_position or not _aircraft_matches_filters(ac, lat_a, lon_a, lat_b, lon_b):
             continue
         geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon, ac.altitude_m, _station_a_alt_m, _station_b_alt_m)  # type: ignore[arg-type]
         score = float(geo.get("scatter_score", 0.0))
-        if score > best_score and score >= 0.05:
-            best_score = score
+        rank = rank_geometry(ac, (lat_a, lon_a, _station_a_alt_m),
+                             (lat_b, lon_b, _station_b_alt_m), method, score, now)
+        key = ranking_key(score, rank, method)
+        if score >= 0.05 and (best_key is None or key > best_key):
+            best_key = key
             best_ac = ac
 
     return best_ac
@@ -1398,9 +1409,10 @@ def _get_scatter_aircraft() -> list[dict]:
             "velocity_kts": round(ac.velocity_ms * 1.94384) if ac.velocity_ms else None,
             "heading_deg": round(ac.heading_deg) if ac.heading_deg is not None else None,
             **geo,
+            **_ranking_for_aircraft(ac, lat_a, lon_a, lat_b, lon_b, geo["scatter_score"]),
         })
 
-    results.sort(key=lambda r: r["scatter_score"], reverse=True)
+    results.sort(key=_aircraft_ranking_key, reverse=True)
     return results
 
 
@@ -1442,10 +1454,22 @@ def _get_scatter_aircraft_with_total(*, apply_filters: bool = True) -> tuple[lis
             "velocity_kts": round(ac.velocity_ms * 1.94384) if ac.velocity_ms else None,
             "heading_deg": round(ac.heading_deg) if ac.heading_deg is not None else None,
             **geo,
+            **_ranking_for_aircraft(ac, lat_a, lon_a, lat_b, lon_b, geo["scatter_score"]),
         })
 
-    results.sort(key=lambda r: r["scatter_score"], reverse=True)
+    results.sort(key=_aircraft_ranking_key, reverse=True)
     return results, total
+
+
+def _ranking_for_aircraft(ac: Aircraft, lat_a: float, lon_a: float, lat_b: float,
+                          lon_b: float, score: float) -> dict:
+    return rank_geometry(ac, (lat_a, lon_a, _station_a_alt_m),
+                         (lat_b, lon_b, _station_b_alt_m),
+                         _aircraft_filters.get("ranking_method", "legacy"), score, time.time())
+
+
+def _aircraft_ranking_key(row: dict) -> tuple:
+    return ranking_key(row["scatter_score"], row, _aircraft_filters.get("ranking_method", "legacy"))
 
 
 def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
@@ -1476,6 +1500,7 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
             "last_update_epoch_s": last_update_epoch_s,
             "cache_age_s": round(age_s, 1) if age_s is not None else None,
             "data_freshness": freshness,
+            "ranking_method": _aircraft_filters.get("ranking_method", "legacy"),
         },
     })
     # Update tracking or try auto-lock
