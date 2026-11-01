@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import math
 import os
+import platform
+import queue
 import re
 import sys
 import tempfile
@@ -19,6 +21,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent.parent))
 
 from airwsjtx.airscout import ADSBExchangeFeed, Aircraft, Dump1090Feed, OpenSkyFeed, SourceRateLimit
+from airwsjtx.rtlsdr import LocalRTLSDRFeed, discover_devices, validate_gain, support_error as rtlsdr_support_error
 from airwsjtx.callsign import (
     DEFAULT_DB_MANIFEST_URL,
     check_db_update as callsign_check_db_update,
@@ -29,6 +32,8 @@ from airwsjtx.callsign import (
 )
 from airwsjtx.geo import bearing_deg, haversine_km, heading_delta_deg, heading_within_tolerance, locator_to_latlon, scatter_geometry
 from airwsjtx.hamlib_rotator import HamlibRotator, RotatorPosition
+from airwsjtx.satpc32_dde import SatPC32DDE
+from airwsjtx.adsb import AIRCRAFT_RETENTION_S, POSITION_RETENTION_S
 from airwsjtx.models import AircraftSample, AircraftTrack, Station
 from airwsjtx.ranking import RANKING_METHODS, rank_geometry, ranking_key
 from airwsjtx.supervisor import AirWSJTXSupervisor
@@ -50,13 +55,22 @@ _source_poll_intervals = {"opensky": 30.0, "adsbexchange": 30.0}
 _source_rate_limits = {"opensky": SourceRateLimit(), "adsbexchange": SourceRateLimit(opensky=False)}
 _dump1090_feed: Dump1090Feed | None = None
 _dump1090_port: int = 30003
-_supported_sources = ("opensky", "dump1090", "adsbexchange")
+_rtlsdr_feed: LocalRTLSDRFeed | None = None
+_rtlsdr_last_snapshot: dict[str, object] = {}
+_rtlsdr_device_index: int | None = None
+_rtlsdr_device_info: dict[str, object] | None = None
+_rtlsdr_gain_db: float | None = None
+_rtlsdr_startup_attempted = False
+_rtlsdr_startup_network_priority: list[str] | None = None
+_supported_sources = ("opensky", "dump1090", "adsbexchange") + (
+    ("rtlsdr",) if sys.platform == "win32" and platform.machine().lower() in ("amd64", "x86_64") else ()
+)
 # dump1090 is OFF by default; the user must explicitly enable it via the UI.
 # The priority is persisted in source_priority.json so opt-in choices survive restarts.
 _DEFAULT_SOURCE_PRIORITY: list[str] = ["opensky"]
 _source_aliases = {
-    "rtl-sdr": "dump1090",
-    "rtl_sdr": "dump1090",
+    "rtl-sdr": "rtlsdr",
+    "rtl_sdr": "rtlsdr",
     "dump1090": "dump1090",
     "opensky": "opensky",
     "adsbexchange": "adsbexchange",
@@ -69,6 +83,8 @@ _source_status: dict[str, dict[str, str | None]] = {
     "dump1090": {"state": "stopped", "message": None},
     "adsbexchange": {"state": "stopped", "message": None},
 }
+if "rtlsdr" in _supported_sources:
+    _source_status["rtlsdr"] = {"state": "stopped", "message": None}
 _active_source: str | None = None
 _opensky_rate_limit_count = 0
 _aircraft_cache_stale_after_s = 45.0
@@ -90,7 +106,10 @@ _station_b_call: str | None = None
 _dx_grid_manual: bool = False
 _STATION_GRID_RE = re.compile(r"[A-R]{2}[0-9]{2}(?:[A-X]{2}(?:[0-9]{2})?)?")
 _manual_pointing: bool = False
-_rotator_control_enabled: bool = True
+_rotator_control_enabled: bool = False
+_output_mode: str = "off"
+_output_lock = threading.RLock()
+_satpc32_dde: SatPC32DDE | None = None
 
 # Aircraft display filters
 _DEFAULT_FILTERS = {
@@ -221,6 +240,10 @@ _rotator: HamlibRotator | None = None
 _auto_lock_enabled: bool = True
 _locked_aircraft_id: str | None = None
 _lock_score: float = 0.0
+_local_lock_waiting_for_window: bool = False
+_manual_aircraft_lock = False
+_manual_lock_source: str | None = None
+_manual_lock_last_seen = 0.0
 _wsjtx_freq_hz: int | None = None
 _wsjtx_band_mhz: float | None = None
 _wsjtx_listener: WSJTXListener | None = None
@@ -246,7 +269,7 @@ def _emit_source_status() -> None:
             "active_source": active_source,
             "priority": priority,
             "sources": sources,
-            "poll_intervals_s": {**_source_poll_intervals, "dump1090": 5.0},
+            "poll_intervals_s": _poll_intervals(),
         },
     })
 
@@ -269,10 +292,13 @@ def _normalize_sources(raw_sources: object) -> list[str]:
         return list(_source_priority)
 
 
-def _replace_aircraft_cache(aircraft: list[Aircraft]) -> None:
+def _replace_aircraft_cache(aircraft: list[Aircraft], *, source: str | None = None) -> None:
     global _aircraft_last_update_monotonic, _aircraft_last_update_epoch_s
     now_monotonic = time.monotonic()
     now_epoch = int(time.time())
+    if source is not None:
+        for ac in aircraft:
+            ac.position_source = source
     with _aircraft_lock:
         _aircraft_cache.clear()
         _aircraft_cache.extend(aircraft)
@@ -343,6 +369,7 @@ def _parse_tracks(raw: list[dict]) -> list[AircraftTrack]:
 
 
 def handle(msg: dict) -> None:
+    global _rtlsdr_device_index, _rtlsdr_device_info, _rtlsdr_gain_db, _rtlsdr_startup_attempted
     method = msg.get("method", "")
     params = msg.get("params", {})
     id_ = msg.get("id")
@@ -434,6 +461,7 @@ def handle(msg: dict) -> None:
             _ok(id_, {"state": supervisor.session.state.value, "wsjtx_tx_sent": wsjtx_tx})
 
         elif method == "get_status":
+            _recover_startup_receiver_failure()
             s = supervisor.session
             _ok(id_, {
                 "state": s.state.value,
@@ -476,6 +504,77 @@ def handle(msg: dict) -> None:
             _emit_aircraft_update(try_auto_lock=False)
             _ok(id_, {"locator_a": _station_a_locator, "locator_b": _station_b_locator})
 
+        elif method == "rtlsdr_discover":
+            _ok(id_, {"devices": discover_devices()})
+
+        elif method == "rtlsdr_status":
+            _ok(id_, _rtlsdr_feed.snapshot() if _rtlsdr_feed else {
+                **_rtlsdr_last_snapshot,
+                "state": _source_status.get("rtlsdr", {}).get("state", "stopped"),
+                "message": rtlsdr_support_error() or _source_status.get("rtlsdr", {}).get("message"),
+                "device_index": _rtlsdr_device_index,
+                "gain_db": _rtlsdr_last_snapshot.get("gain_db"),
+                "last_message_age_s": None,
+            })
+
+        elif method == "rtlsdr_get_gains":
+            index = params.get("device_index", 0)
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise ValueError("device_index must be a non-negative integer")
+            if _rtlsdr_feed is not None:
+                if index != _rtlsdr_feed.device_index:
+                    raise ValueError("Stop the active receiver before selecting another USB device")
+                gains = _rtlsdr_feed.supported_gains_db
+            else:
+                devices = discover_devices()
+                device = next((device for device in devices if device["index"] == index), None)
+                if device is None or device["available"] is not True:
+                    raise ValueError("Selected RTL-SDR receiver is no longer attached")
+                gains = device["supported_gains_db"]
+            _ok(id_, {"supported_gains_db": gains})
+
+        elif method == "rtlsdr_auto_start":
+            _auto_start_rtlsdr()
+            _ok(id_, {"attempted": _rtlsdr_startup_attempted})
+
+        elif method == "rtlsdr_start":
+            index = params.get("device_index", 0)
+            if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+                raise ValueError("device_index must be a non-negative integer")
+            devices = discover_devices()
+            device = next((device for device in devices if device["index"] == index), None)
+            if device is None or device["available"] is not True:
+                raise ValueError("No accessible RTL-SDR receiver found. Check USB connection and the WinUSB driver for Bulk-In Interface 0; close other SDR apps.")
+            requested_gain = params.get("gain_db")
+            gain = validate_gain(requested_gain, device["supported_gains_db"])
+            _rtlsdr_device_index = index
+            _rtlsdr_device_info = device
+            _rtlsdr_gain_db = gain
+            with _source_priority_lock:
+                next_priority = ["rtlsdr"] + [source for source in _source_priority if source != "rtlsdr"]
+            _set_aircraft_sources(next_priority)
+            _ok(id_, _rtlsdr_feed.snapshot() if _rtlsdr_feed else {
+                "state": "error", "message": _source_status.get("rtlsdr", {}).get("message"),
+            })
+
+        elif method == "rtlsdr_set_gain":
+            if _rtlsdr_feed is None:
+                raise ValueError("Start a local receiver before adjusting its gain")
+            gain = validate_gain(params.get("gain_db"), _rtlsdr_feed.supported_gains_db)
+            _stop_source("rtlsdr")
+            _rtlsdr_gain_db = gain
+            if not _start_rtlsdr_feed():
+                raise RuntimeError(_source_status["rtlsdr"]["message"])
+            _emit_aircraft_update(try_auto_lock=False)
+            _ok(id_, _rtlsdr_feed.snapshot())
+
+        elif method == "rtlsdr_stop":
+            _rtlsdr_startup_attempted = True
+            with _source_priority_lock:
+                next_priority = [source for source in _source_priority if source != "rtlsdr"]
+            _set_aircraft_sources(next_priority or list(_DEFAULT_SOURCE_PRIORITY))
+            _ok(id_, {"state": "stopped", "message": "Receiver stopped; returned to configured network sources."})
+
         elif method == "airscout_get_dump1090_host":
             global _dump1090_host, _dump1090_port
             _ok(id_, {"host": _dump1090_host, "port": _dump1090_port})
@@ -500,13 +599,8 @@ def handle(msg: dict) -> None:
             _ok(id_, {"host": host, "port": port})
 
         elif method == "airscout_set_sources":
-            global _source_priority
             next_priority = _normalize_sources(params.get("sources"))
-            with _source_priority_lock:
-                _source_priority = next_priority
-            _write_source_priority(next_priority)
-            _start_configured_airscout_feed(force_restart=True)
-            _emit_aircraft_update(try_auto_lock=False)
+            _set_aircraft_sources(next_priority)
             with _source_priority_lock:
                 priority = list(_source_priority)
             with _source_status_lock:
@@ -516,7 +610,7 @@ def handle(msg: dict) -> None:
                 "active_source": active_source,
                 "priority": priority,
                 "sources": sources,
-                "poll_intervals_s": {**_source_poll_intervals, "dump1090": 5.0},
+                "poll_intervals_s": _poll_intervals(),
             })
 
         elif method == "airscout_get_sources":
@@ -529,7 +623,7 @@ def handle(msg: dict) -> None:
                 "active_source": active_source,
                 "priority": priority,
                 "sources": sources,
-                "poll_intervals_s": {**_source_poll_intervals, "dump1090": 5.0},
+                "poll_intervals_s": _poll_intervals(),
             })
 
         elif method == "airscout_apply_filters":
@@ -574,10 +668,10 @@ def handle(msg: dict) -> None:
                 feed = _adsbexchange_feed if _active_source == "adsbexchange" else _opensky_feed
                 if _active_source in ("opensky", "adsbexchange") and feed:
                     aircraft = feed.fetch_once()
-                    _replace_aircraft_cache(aircraft)
+                    _replace_aircraft_cache(aircraft, source=_active_source)
                     _emit_aircraft_update()
                     _ok(id_, {"count": len(aircraft)})
-                elif _active_source == "dump1090":
+                elif _active_source in ("dump1090", "rtlsdr"):
                     with _aircraft_lock:
                         count = len(_aircraft_cache)
                     _emit_aircraft_update()
@@ -589,6 +683,23 @@ def handle(msg: dict) -> None:
 
         # ── Rotator methods ───────────────────────────────────────────────────
 
+        elif method == "satpc32_dde_status":
+            _ok(id_, _dde_status())
+
+        elif method == "satpc32_dde_set":
+            enabled = params.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("enabled must be a boolean")
+            _set_output_mode("dde" if enabled else "off")
+            _ok(id_, _dde_status())
+
+        elif method == "rotator_output_status":
+            _ok(id_, _output_status())
+
+        elif method == "rotator_output_set":
+            _set_output_mode(params.get("mode"))
+            _ok(id_, _output_status())
+
         elif method == "rotator_connect":
             host = params.get("host", "127.0.0.1")
             port = int(params.get("port", 4533))
@@ -597,34 +708,44 @@ def handle(msg: dict) -> None:
 
         elif method == "set_pointing_mode":
             global _manual_pointing
-            _manual_pointing = params.get("mode") == "manual"
+            with _output_lock:
+                _manual_pointing = params.get("mode") == "manual"
+                if _manual_pointing and _satpc32_dde:
+                    _satpc32_dde.clear()
+                elif _output_mode == "dde":
+                    _prime_dde_target()
             _ok(id_, {"mode": "manual" if _manual_pointing else "rotator"})
 
         elif method == "set_rotator_control":
-            global _rotator_control_enabled
-            _rotator_control_enabled = bool(params.get("enabled", True))
+            _set_output_mode("hamlib" if params.get("enabled", True) else "off")
             _ok(id_, {"enabled": _rotator_control_enabled})
 
         elif method == "rotator_set":
-            if not _rotator_control_enabled:
-                _err(id_, "Rotator control is disabled")
-            elif not _rotator or not _rotator.connected:
-                _err(id_, "Rotator not connected")
-            else:
-                az = float(params["azimuth"])
-                el = float(params.get("elevation", 0.0))
+            with _output_lock:
+                if _output_mode != "hamlib":
+                    raise ValueError("Select Hamlib output before sending coordinates")
+                if not _manual_pointing:
+                    raise ValueError("Direct coordinates require Manual mode; Auto uses fresh backend aircraft positions")
+                if not _rotator or not _rotator.connected:
+                    raise ValueError("Rotator not connected")
+                az, el = float(params["azimuth"]), float(params.get("elevation", 0.0))
+                if not math.isfinite(az) or not math.isfinite(el) or not 0 <= az <= 450 or not 0 <= el <= 90:
+                    raise ValueError("Invalid rotator coordinates")
                 _rotator.set_position(az, el)
                 _ok(id_, {"azimuth": az, "elevation": el})
 
         elif method == "rotator_stop":
-            if _rotator:
-                _rotator.stop_rotation()
+            with _output_lock:
+                was_hamlib = _output_mode == "hamlib"
+                _set_output_mode("off")
+                if was_hamlib and _rotator:
+                    _rotator.stop_rotation()
             _ok(id_, {})
 
         elif method == "rotator_park":
-            if not _rotator_control_enabled:
-                _err(id_, "Rotator control is disabled")
-            else:
+            with _output_lock:
+                if _output_mode != "hamlib":
+                    raise ValueError("Select Hamlib output before parking")
                 if _rotator:
                     _rotator.park()
                 _ok(id_, {})
@@ -796,6 +917,113 @@ def handle(msg: dict) -> None:
 
 # ─── AirScout feed helpers ────────────────────────────────────────────────────
 
+def _poll_intervals() -> dict[str, float]:
+    return {**_source_poll_intervals, "dump1090": 5.0,
+            **({"rtlsdr": 1.0} if "rtlsdr" in _supported_sources else {})}
+
+
+def _set_aircraft_sources(priority: list[str]) -> None:
+    global _source_priority
+    with _source_priority_lock:
+        _source_priority = priority
+    _write_source_priority(priority)
+    _start_configured_airscout_feed(force_restart=True)
+    _emit_aircraft_update(try_auto_lock=False)
+
+
+def _start_rtlsdr_feed() -> bool:
+    global _rtlsdr_feed, _active_source
+    if _rtlsdr_device_index is None:
+        _set_source_status("rtlsdr", "error", "No receiver selected. Automatic startup may find an attached receiver; use Discover and Start to retry.")
+        return False
+
+    def on_status(state: str, message: str | None) -> None:
+        _set_source_status("rtlsdr", state, message)
+        if state == "error":
+            _emit({"event": "airscout_error", "data": {"source": "rtlsdr", "message": message}})
+
+    def on_update(aircraft: list[Aircraft]) -> None:
+        _replace_aircraft_cache(aircraft, source="rtlsdr")
+        _emit_aircraft_update()
+        _emit({"event": "rtlsdr_update", "data": feed.snapshot()})
+
+    feed = LocalRTLSDRFeed(
+        _rtlsdr_device_index, on_update, on_status,
+        gain_db=_rtlsdr_gain_db, device_info=_rtlsdr_device_info,
+    )
+    _rtlsdr_feed = feed
+    with _source_status_lock:
+        _active_source = "rtlsdr"
+    # Never carry positioned network aircraft over as if received locally.
+    _replace_aircraft_cache([])
+    try:
+        feed.start()
+    except (OSError, RuntimeError) as error:
+        feed.stop()
+        _rtlsdr_feed = None
+        _set_source_status("rtlsdr", "error", str(error))
+        _emit({"event": "airscout_error", "data": {"source": "rtlsdr", "message": str(error)}})
+        return False
+    return True
+
+
+def _auto_start_rtlsdr() -> None:
+    global _rtlsdr_startup_attempted, _rtlsdr_device_index, _rtlsdr_device_info
+    global _rtlsdr_startup_network_priority, _source_priority, _active_source
+    if _rtlsdr_startup_attempted:
+        return
+    _rtlsdr_startup_attempted = True
+    if rtlsdr_support_error() or _rtlsdr_feed is not None:
+        return
+    try:
+        devices = discover_devices()
+    except (OSError, RuntimeError) as error:
+        _set_source_status("rtlsdr", "error", str(error))
+        _start_configured_airscout_feed()
+        return
+    available = next((device for device in devices if device["available"]), None)
+    if available is None:
+        _set_source_status("rtlsdr", "stopped",
+                           "No accessible RTL-SDR attached; configured network sources remain available.")
+        _start_configured_airscout_feed()
+        return
+    with _source_priority_lock:
+        _rtlsdr_startup_network_priority = [s for s in _source_priority if s != "rtlsdr"]
+    # Start before stopping a working network feed, so USB failure cannot disrupt it.
+    previous_source = _active_source
+    previous_aircraft = _current_aircraft_snapshot()
+    _rtlsdr_device_index = int(available["index"])
+    _rtlsdr_device_info = available
+    if _start_rtlsdr_feed():
+        if previous_source and previous_source != "rtlsdr":
+            _stop_source(previous_source)
+        with _source_priority_lock:
+            _source_priority = ["rtlsdr"] + _rtlsdr_startup_network_priority
+        _emit_source_status()
+    else:
+        _rtlsdr_device_index = None
+        with _source_status_lock:
+            _active_source = previous_source
+        _replace_aircraft_cache(previous_aircraft)
+        _start_configured_airscout_feed()
+
+
+def _recover_startup_receiver_failure() -> None:
+    global _source_priority, _active_source, _rtlsdr_device_index
+    if (_rtlsdr_startup_network_priority is None or _active_source != "rtlsdr"
+            or _rtlsdr_feed is None or _rtlsdr_feed.snapshot()["state"] != "error"):
+        return
+    message = _rtlsdr_feed.snapshot().get("message")
+    _stop_source("rtlsdr")
+    _rtlsdr_device_index = None
+    with _source_priority_lock:
+        _source_priority = [s for s in _source_priority if s != "rtlsdr"]
+    with _source_status_lock:
+        _active_source = None
+    _set_source_status("rtlsdr", "error", message)
+    _start_configured_airscout_feed()
+
+
 def _validate_poll_interval(provider: str, seconds: object) -> None:
     if provider not in _source_poll_intervals:
         raise ValueError("Unsupported aircraft poll provider")
@@ -804,7 +1032,9 @@ def _validate_poll_interval(provider: str, seconds: object) -> None:
         raise ValueError(f"{provider} poll interval must be at least {minimum} seconds")
 
 def _stop_source(source: str) -> None:
-    global _opensky_feed, _dump1090_feed, _adsbexchange_feed
+    global _opensky_feed, _dump1090_feed, _adsbexchange_feed, _rtlsdr_feed, _rtlsdr_last_snapshot
+    if source == _active_source and _satpc32_dde:
+        _satpc32_dde.clear()
     if source == "opensky":
         if _opensky_feed:
             _opensky_feed.stop()
@@ -820,6 +1050,13 @@ def _stop_source(source: str) -> None:
             _adsbexchange_feed.stop()
             _adsbexchange_feed = None
         _set_source_status("adsbexchange", "stopped")
+    elif source == "rtlsdr":
+        if _rtlsdr_feed:
+            _rtlsdr_feed.stop()
+            _rtlsdr_last_snapshot = _rtlsdr_feed.snapshot()
+            _rtlsdr_feed = None
+        _replace_aircraft_cache([])
+        _set_source_status("rtlsdr", "stopped")
 
 
 def _start_source(source: str) -> bool:
@@ -835,6 +1072,10 @@ def _start_source(source: str) -> bool:
     if source == "adsbexchange":
         _start_adsbexchange_feed()
         return _adsbexchange_feed is not None
+    if source == "rtlsdr":
+        if _rtlsdr_startup_attempted and _rtlsdr_device_index is None:
+            return False
+        return _start_rtlsdr_feed()
     return False
 
 
@@ -928,6 +1169,8 @@ def _start_adsbexchange_feed() -> None:
     if _adsbexchange_feed:
         _adsbexchange_feed.stop()
         _adsbexchange_feed = None
+    if _rtlsdr_feed:
+        _stop_source("rtlsdr")
     key = _adsbexchange_api_key or os.environ.get("ADSBEXCHANGE_API_KEY", "").strip()
     if not key:
         _set_source_status("adsbexchange", "error", "Save an API key in Aircraft accounts or set ADSBEXCHANGE_API_KEY")
@@ -947,7 +1190,7 @@ def _start_adsbexchange_feed() -> None:
         if _active_source != "adsbexchange" or _adsbexchange_feed is not feed:
             return
         _set_source_status("adsbexchange", "connected")
-        _replace_aircraft_cache(aircraft)
+        _replace_aircraft_cache(aircraft, source="adsbexchange")
         _emit_aircraft_update()
 
     def on_error(message: str) -> None:
@@ -997,7 +1240,7 @@ def _start_opensky_feed() -> None:
         with _source_status_lock:
             _opensky_rate_limit_count = 0
         _set_source_status("opensky", "connected")
-        _replace_aircraft_cache(aircraft)
+        _replace_aircraft_cache(aircraft, source="opensky")
         _emit_aircraft_update()
 
     def _on_rate_limited(wait_s: float) -> None:
@@ -1059,13 +1302,16 @@ def _locked_aircraft_info(ac: Aircraft, geo: dict) -> dict:
         "scatter_score": geo["scatter_score"],
         "off_path_deg": geo["off_path_deg"],
         "position_updated_epoch_s": ac.position_updated_epoch_s,
+        "position_source": ac.position_source or _active_source,
+        "position_max_age_s": _position_max_age_s(ac),
         "state": supervisor.session.state.value,
     }
 
 
-def _do_lock(icao24: str) -> dict | None:
+def _do_lock(icao24: str, *, manual: bool = True) -> dict | None:
     """Lock onto a specific aircraft (by icao24). Returns lock info or None."""
-    global _locked_aircraft_id, _lock_score, supervisor
+    global _locked_aircraft_id, _lock_score, _local_lock_waiting_for_window, supervisor
+    global _manual_aircraft_lock, _manual_lock_source, _manual_lock_last_seen
     if not _station_a_locator or not _station_b_locator:
         return None
 
@@ -1135,10 +1381,15 @@ def _do_lock(icao24: str) -> dict | None:
 
     _locked_aircraft_id = icao24
     _lock_score = geo["scatter_score"]
+    # A manually selected local aircraft may not have entered the path yet.
+    _local_lock_waiting_for_window = _active_source == "rtlsdr" and _lock_score < 0.05
+    _manual_aircraft_lock = manual
+    _manual_lock_source = _active_source
+    _manual_lock_last_seen = time.monotonic()
+    _publish_dde_target(ac, geo)
 
     # Point rotator immediately (manual pointing mode ignores plane positions)
-    if _rotator and _rotator.connected and _rotator_control_enabled and not _manual_pointing:
-        _rotator.set_position(geo["az_a"], geo["el_a"])
+    _publish_hamlib_target(ac, geo)
 
     info = {**_locked_aircraft_info(ac, geo), "hint": hint}
     _emit({"event": "plane_locked", "data": info})
@@ -1146,9 +1397,15 @@ def _do_lock(icao24: str) -> dict | None:
 
 
 def _do_unlock() -> None:
-    global _locked_aircraft_id, _lock_score
+    global _locked_aircraft_id, _lock_score, _local_lock_waiting_for_window
+    global _manual_aircraft_lock, _manual_lock_source
     _locked_aircraft_id = None
     _lock_score = 0.0
+    _local_lock_waiting_for_window = False
+    _manual_aircraft_lock = False
+    _manual_lock_source = None
+    if _satpc32_dde:
+        _satpc32_dde.clear()
     try:
         supervisor.finish_qso(abort=True)
     except Exception:
@@ -1199,11 +1456,12 @@ def _try_auto_lock(aircraft: list[Aircraft], *, filters: dict | None = None) -> 
 
     best_ac = _select_auto_lock_candidate(aircraft, filters=filters)
     if best_ac:
-        _do_lock(best_ac.icao24)
+        _do_lock(best_ac.icao24, manual=False)
 
 
 def _update_rotator_for_locked(aircraft: list[Aircraft]) -> None:
     """After a lock, track the locked aircraft's updated position with the rotator."""
+    global _local_lock_waiting_for_window
     if not _locked_aircraft_id or not _station_a_locator:
         return
     ac = next((a for a in aircraft if a.icao24 == _locked_aircraft_id), None)
@@ -1218,20 +1476,130 @@ def _update_rotator_for_locked(aircraft: list[Aircraft]) -> None:
         return
 
     # Point rotator at new position (unless manual pointing mode)
-    if _rotator and _rotator.connected and _rotator_control_enabled and not _manual_pointing:
-        _rotator.set_position(geo["az_a"], geo["el_a"])
+    _publish_hamlib_target(ac, geo)
 
-    # Check if aircraft has left the scatter window
-    if geo["scatter_score"] < 0.05 and not _matches_priority_flight(ac):
+    waiting_for_window = _active_source == "rtlsdr" and _local_lock_waiting_for_window
+    if geo["scatter_score"] >= 0.05:
+        _local_lock_waiting_for_window = False
+    # A pre-window local selection has not left a window it never entered.
+    if (geo["scatter_score"] < 0.05 and not _manual_aircraft_lock
+            and not waiting_for_window and not _matches_priority_flight(ac)):
         _emit({"event": "plane_out_of_window", "data": {"icao24": _locked_aircraft_id}})
         _do_unlock()
         return
 
+    _publish_dde_target(ac, geo)
     _emit({"event": "plane_tracking", "data": {
         **_locked_aircraft_info(ac, geo),
         "rotator_az": _rotator.current_position.azimuth if _rotator and _rotator.current_position else None,
         "rotator_el": _rotator.current_position.elevation if _rotator and _rotator.current_position else None,
     }})
+
+
+def _dde_status() -> dict:
+    reference = {
+        "reference": "MY station (A)",
+        "station_grid": _station_a_locator,
+        "station_altitude_m": _station_a_alt_m,
+        "azimuth_units": "degrees clockwise from true north",
+        "elevation_units": "degrees above the radio horizon (4/3 Earth)",
+        "name_field": "flight identifier/callsign, or ICAO address if unavailable",
+    }
+    if _satpc32_dde:
+        return {**_satpc32_dde.status(), **reference}
+    return {"supported": sys.platform == "win32", "enabled": False,
+            "service": "SatPC32", "topic": "SatPcDdeConv", "item": "SatPcDdeItem",
+            "target": "** NO SATELLITE **", "error": None, **reference}
+
+def _output_status() -> dict:
+    with _output_lock:
+        return {"mode": _output_mode, "manual": _manual_pointing,
+                "hamlib_connected": bool(_rotator and _rotator.connected),
+                "dde": _dde_status()}
+
+
+def _set_output_mode(mode: str) -> None:
+    global _output_mode, _rotator_control_enabled, _satpc32_dde
+    if mode not in ("off", "hamlib", "dde"):
+        raise ValueError("Output mode must be off, hamlib, or dde")
+    with _output_lock:
+        if mode == _output_mode and ((mode != "dde" and _satpc32_dde is None) or
+                (mode == "dde" and _satpc32_dde and _satpc32_dde.status()["enabled"])):
+            return
+        _output_mode, _rotator_control_enabled = "off", False
+        if _satpc32_dde:
+            _satpc32_dde.clear()
+            _satpc32_dde.stop()
+            _satpc32_dde = None
+        if mode == "dde":
+            server = SatPC32DDE(on_error=lambda message: _emit({
+                "event": "rotator_error", "data": {"message": f"SatPC32 DDE: {message}"},
+            }))
+            server.start()
+            _satpc32_dde = server
+        _output_mode, _rotator_control_enabled = mode, mode != "off"
+        if mode == "dde":
+            _prime_dde_target()
+
+
+def _publish_hamlib_target(ac: Aircraft, geo: dict) -> None:
+    with _output_lock:
+        if (_output_mode != "hamlib" or _manual_pointing or
+                not _rotator or not _rotator.connected or _position_valid_for_s(ac) <= 0):
+            return
+        az, el = float(geo["az_a"]), float(geo["el_a"])
+        if math.isfinite(az) and math.isfinite(el) and 0 <= el <= 90:
+            _rotator.set_position(az, el)
+
+
+def _prime_dde_target() -> None:
+    """Publish the existing selection on enable, without Hamlib or lock side effects."""
+    if not _locked_aircraft_id or not _station_a_locator:
+        return
+    ac = next((ac for ac in _current_aircraft_snapshot()
+               if ac.icao24 == _locked_aircraft_id), None)
+    if ac is None or not ac.has_position:
+        return
+    lat_a, lon_a = locator_to_latlon(_station_a_locator)
+    lat_b, lon_b = locator_to_latlon(_station_b_locator or _station_a_locator)
+    geo = scatter_geometry(lat_a, lon_a, lat_b, lon_b, ac.lat, ac.lon,
+                           ac.altitude_m, _station_a_alt_m, _station_b_alt_m)
+    _publish_dde_target(ac, geo)
+
+
+def _publish_dde_target(ac: Aircraft, geo: dict) -> None:
+    with _output_lock:
+        _publish_dde_target_locked(ac, geo)
+
+
+def _publish_dde_target_locked(ac: Aircraft, geo: dict) -> None:
+    if not _satpc32_dde:
+        return
+    if _output_mode != "dde" or not _rotator_control_enabled or _manual_pointing or not ac.has_position:
+        _satpc32_dde.clear()
+        return
+    remaining = _position_valid_for_s(ac)
+    az, el = float(geo["az_a"]), float(geo["el_a"])
+    if remaining <= 0 or not math.isfinite(az) or not math.isfinite(el) or not 0 <= el <= 90:
+        _satpc32_dde.clear()
+        return
+    name = "".join((ac.callsign or "").upper().split())
+    if not name or len(name) > 32 or not all(c.isascii() and (c.isalnum() or c == "-") for c in name):
+        name = ac.icao24
+    _satpc32_dde.update(name, az, el, valid_for_s=remaining)
+
+
+def _position_valid_for_s(ac: Aircraft) -> float:
+    stamp = ac.position_updated_epoch_s
+    if not ac.has_position or stamp is None or not math.isfinite(stamp):
+        return 0
+    max_age = _position_max_age_s(ac)
+    return max(0, max_age - max(0, time.time() - stamp))
+
+
+def _position_max_age_s(ac: Aircraft) -> float:
+    source = ac.position_source or _active_source
+    return POSITION_RETENTION_S if source == "rtlsdr" else _poll_intervals().get(source, 30) + 5
 
 
 def _start_rotator(host: str, port: int) -> None:
@@ -1258,13 +1626,15 @@ def _start_rotator(host: str, port: int) -> None:
 
 def _start_dump1090_feed(host: str, port: int) -> None:
     global _dump1090_feed, _active_source
+    if _rtlsdr_feed is not None:
+        _stop_source("rtlsdr")
     if _dump1090_feed:
         _dump1090_feed.stop()
         _dump1090_feed = None
 
     def _on_update(aircraft: list[Aircraft]) -> None:
         _set_source_status("dump1090", "connected")
-        _replace_aircraft_cache(aircraft)
+        _replace_aircraft_cache(aircraft, source="dump1090")
         feed = _dump1090_feed
         last_message = feed.last_message_epoch_s if feed else None
         _emit({"event": "dump1090_activity", "data": {
@@ -1425,6 +1795,7 @@ def _get_scatter_aircraft_with_total(*, apply_filters: bool = True, filters: dic
 
 
 def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
+    global _manual_lock_last_seen
     filters = dict(_aircraft_filters)
     now = time.time()
     age_s = _aircraft_cache_age_s()
@@ -1460,7 +1831,32 @@ def _emit_aircraft_update(*, try_auto_lock: bool = True) -> None:
     # Update tracking or try auto-lock
     snapshot = _current_aircraft_snapshot()
     if _locked_aircraft_id:
-        if any(ac["icao24"] == _locked_aircraft_id for ac in aircraft):
+        locked_record = next((ac for ac in snapshot if ac.icao24 == _locked_aircraft_id), None)
+        if _manual_aircraft_lock:
+            if active_source != _manual_lock_source or (locked_record and locked_record.on_ground):
+                _do_unlock()
+                return
+            if locked_record is not None:
+                _manual_lock_last_seen = max(_manual_lock_last_seen, locked_record.last_seen)
+            retention = AIRCRAFT_RETENTION_S if active_source == "rtlsdr" else _aircraft_cache_expire_after_s
+            if time.monotonic() - _manual_lock_last_seen > retention:
+                _do_unlock()
+                return
+            if locked_record is None or not locked_record.has_position:
+                if _satpc32_dde:
+                    _satpc32_dde.clear()
+            else:
+                _update_rotator_for_locked(snapshot)
+            return
+        local_position_gap = (active_source == "rtlsdr" and locked_record is not None
+                              and not locked_record.on_ground and not locked_record.has_position)
+        local_pre_window = (active_source == "rtlsdr" and _local_lock_waiting_for_window
+                            and locked_record is not None and not locked_record.on_ground)
+        if local_position_gap:
+            # Keep selection, but never refresh pointing with an expired CPR fix.
+            if _satpc32_dde:
+                _satpc32_dde.clear()
+        elif local_pre_window or any(ac["icao24"] == _locked_aircraft_id for ac in aircraft):
             _update_rotator_for_locked(snapshot)
         else:
             _do_unlock()
@@ -1580,6 +1976,25 @@ def _on_wsjtx_error(message: str) -> None:
     _emit({"event": "wsjtx_error", "data": {"message": message}})
 
 
+def _shutdown_backend() -> None:
+    global _output_mode, _rotator_control_enabled
+    with _output_lock:
+        _output_mode, _rotator_control_enabled = "off", False
+        if _satpc32_dde:
+            _satpc32_dde.clear()
+    for name, resource in (
+        ("DDE", _satpc32_dde), ("WSJT-X", _wsjtx_listener),
+        ("Hamlib", _rotator), ("OpenSky", _opensky_feed),
+        ("dump1090", _dump1090_feed), ("ADS-B Exchange", _adsbexchange_feed),
+        ("RTL-SDR", _rtlsdr_feed),
+    ):
+        if resource:
+            try:
+                resource.stop()
+            except Exception as exc:
+                print(f"Cannot stop {name} during shutdown: {exc}", file=sys.stderr, flush=True)
+
+
 def main() -> None:
     global _wsjtx_listener
     _emit_source_status()
@@ -1594,26 +2009,21 @@ def main() -> None:
     _wsjtx_listener = listener
     listener.start()
 
-    for line in sys.stdin:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            msg = json.loads(line)
-        except json.JSONDecodeError as e:
-            _err(None, f"Invalid JSON: {e}")
-            continue
-        handle(msg)
-
-    listener.stop()
-    if _rotator:
-        _rotator.stop()
-    if _opensky_feed:
-        _opensky_feed.stop()
-    if _dump1090_feed:
-        _dump1090_feed.stop()
-    if _adsbexchange_feed:
-        _adsbexchange_feed.stop()
+    try:
+        for line in sys.stdin:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+            except json.JSONDecodeError as e:
+                _err(None, f"Invalid JSON: {e}")
+                continue
+            if msg.get("method") == "shutdown":
+                break
+            handle(msg)
+    finally:
+        _shutdown_backend()
 
 
 if __name__ == "__main__":

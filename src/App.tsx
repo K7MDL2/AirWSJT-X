@@ -3,10 +3,13 @@ import { emit, listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DarkSelect from "./DarkSelect";
 import RotatorPanel from "./RotatorPanel";
+import SatPC32DDE, { type OutputMode, type PublishedTarget } from "./SatPC32DDE";
 import PlaneLockPanel from "./PlaneLockPanel";
 import AircraftAccounts from "./AircraftAccounts";
 import AzElReadout from "./AzElReadout";
 import Dump1090Source, { Dump1090Host } from "./Dump1090Source";
+import LocalReceiver from "./LocalReceiver";
+import { rpc } from "./lib/sidecarRpc";
 import {
   FLOAT_ACTION_EVENT, FLOAT_CLOSED_EVENT, FLOAT_READY_EVENT, FLOAT_STATE_EVENT,
   nativeFloatSupported, syncFloatWindow,
@@ -196,18 +199,6 @@ function loadAircraftFilters(stationA: string | null | undefined, stationB: stri
 
 // ─── Sidecar RPC ──────────────────────────────────────────────────────────────
 
-let _rpcId = 0;
-const _pending = new Map<string, (r: { ok: boolean; result?: unknown; error?: string }) => void>();
-
-async function rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
-  const id = String(++_rpcId);
-  const msg = JSON.stringify({ id, method, params });
-  return new Promise((resolve, reject) => {
-    _pending.set(id, (r) => r.ok ? resolve(r.result) : reject(new Error(r.error)));
-    invoke("send_to_sidecar", { message: msg }).catch(reject);
-  });
-}
-
 const loadDump1090Host = () => rpc("airscout_get_dump1090_host") as Promise<Dump1090Host>;
 const saveDump1090Host = (host: string) =>
   rpc("airscout_set_dump1090_host", { host }) as Promise<Dump1090Host>;
@@ -305,7 +296,6 @@ const AZEL_PANEL_ENABLED = false;
 const ROTATOR_SPEECH_ENABLED_KEY = "airwsjtx.rotatorSpeech.enabled";
 const ROTATOR_SPEECH_THRESHOLD_KEY = "airwsjtx.rotatorSpeech.thresholdDeg";
 const ROTATOR_SPEECH_INTERVAL_KEY = "airwsjtx.rotatorSpeech.intervalSec";
-const ROTATOR_CONTROL_KEY = "airwsjtx.rotatorControlEnabled";
 const ROTATOR_SPEECH_MIGRATED_KEY = "airwsjtx.rotatorSpeech.threshold1degMigrated";
 const SKYDOME_RECT_KEY = "airwsjtx.skyDomeRect";
 const SKYDOME_MIN_W = 280;
@@ -428,9 +418,9 @@ export default function App() {
   const dump1090LogRef = useRef<{ signature: string; at: number } | null>(null);
   const dump1090BusyLogRef = useRef<{ signature: string; at: number } | null>(null);
   const [rotatorConnected, setRotatorConnected] = useState(false);
-  const [rotatorControlEnabled, setRotatorControlEnabled] = useState(
-    () => localStorage.getItem(ROTATOR_CONTROL_KEY) !== "false",
-  );
+  const [outputMode, setOutputMode] = useState<OutputMode>("off");
+  const [publishedDdeTarget, setPublishedDdeTarget] = useState<PublishedTarget | null>(null);
+  const rotatorControlEnabled = outputMode === "hamlib";
   const [rotatorAz, setRotatorAz] = useState(0);
   const [rotatorEl, setRotatorEl] = useState(0);
   const [rotatorTargetAz, setRotatorTargetAz] = useState<number | null>(null);
@@ -544,6 +534,8 @@ export default function App() {
     scatter_score: number; off_path_deg: number; state: string;
     rotator_az?: number | null; rotator_el?: number | null;
     position_updated_epoch_s?: number | null;
+    position_source?: string | null;
+    position_max_age_s?: number;
     range_a_km?: number | null;
     range_b_km?: number | null;
   } | null>(null);
@@ -713,6 +705,9 @@ export default function App() {
               off_path_deg: typeof evtData.off_path_deg === "number" ? evtData.off_path_deg : prev.off_path_deg,
               position_updated_epoch_s: typeof evtData.position_updated_epoch_s === "number"
                 ? evtData.position_updated_epoch_s : null,
+              position_source: typeof evtData.position_source === "string" ? evtData.position_source : null,
+              position_max_age_s: typeof evtData.position_max_age_s === "number"
+                ? evtData.position_max_age_s : undefined,
               scatter_score: evtData.scatter_score as number,
               state: evtData.state as string,
               rotator_az: evtData.rotator_az as number | null,
@@ -726,12 +721,6 @@ export default function App() {
           return;
         }
 
-        // RPC response
-        if (data.id && _pending.has(data.id as string)) {
-          const resolver = _pending.get(data.id as string)!;
-          _pending.delete(data.id as string);
-          resolver(data as { ok: boolean; result?: unknown; error?: string });
-        }
       } catch { /* ignore */ }
     });
     return () => { unlisten.then((f) => f()); };
@@ -772,10 +761,16 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (sourceStatus !== null) return;
     rpc("airscout_get_sources")
       .then((s) => setSourceStatus(s as AirscoutSourceState))
-      .catch(() => {});
-  }, []);
+      .catch(error => addLog(`Cannot read aircraft sources: ${String(error)}`));
+  }, [status !== null, addLog]);
+
+  useEffect(() => {
+    if (status === null) return;
+    rpc("rtlsdr_auto_start").catch(error => addLog(`Automatic USB receiver startup: ${String(error)}`));
+  }, [status !== null, addLog]);
 
   useEffect(() => {
     const id = setInterval(() => setNowEpochS(Math.floor(Date.now() / 1000)), 1000);
@@ -807,7 +802,7 @@ export default function App() {
   const lastPlaneTargetRef = useRef<{ az: number; el: number } | null>(null);
   const planeTargetValid = !!lockedPlane && Number.isFinite(lockedPlane.az_a) && Number.isFinite(lockedPlane.el_a);
   if (lockedPlane && planeTargetValid) lastPlaneTargetRef.current = { az: lockedPlane.az_a, el: lockedPlane.el_a };
-  const autoTargetInvalid = uiMode !== "manual" && !planeTargetValid;
+  const autoTargetInvalid = outputMode === "dde" ? !publishedDdeTarget : uiMode !== "manual" && !planeTargetValid;
   const lastPlaneTarget = lastPlaneTargetRef.current;
 
   const manualSpeechTarget = uiMode !== "manual" && lockedPlane
@@ -990,7 +985,7 @@ export default function App() {
   const internetSourceState = activeSource === "adsbexchange"
     ? activeSourceState : sourceStatus?.sources?.opensky?.state ?? "stopped";
   const dump1090Busy = activeSource === "dump1090" && activeSourceState === "busy";
-  const connectivityState = activeSource === "dump1090" && activeSourceState === "connected"
+  const connectivityState = (activeSource === "dump1090" || activeSource === "rtlsdr") && activeSourceState === "connected"
     ? "local"
     : dump1090Busy
       ? "busy"
@@ -1122,14 +1117,8 @@ export default function App() {
   }, [status === null, myCallsign, myGrid, myCallOverride, myGridOverride, dxCall, selectedDxGrid, dxLocal, addLog]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    localStorage.setItem(ROTATOR_CONTROL_KEY, String(rotatorControlEnabled));
     if (!status) return;
-    rpc("set_rotator_control", { enabled: rotatorControlEnabled }).catch(() => {});
-  }, [status === null, rotatorControlEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (!status) return;
-    rpc("set_pointing_mode", { mode: uiMode }).catch(() => {});
+    rpc("set_pointing_mode", { mode: uiMode }).catch(e => addLog(`Pointing mode: ${e}`));
   }, [status === null, uiMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -1361,9 +1350,9 @@ export default function App() {
       addLog(`Stored DX ${call}`);
     }
   }
-  const currentAz = autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.az
+  const currentAz = outputMode === "dde" ? publishedDdeTarget?.az ?? 0 : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.az
     : lockedPlane && uiMode !== "manual" ? (Number.isFinite(lockedPlane.az_a) ? lockedPlane.az_a : rotatorAz) : rotatorAz;
-  const currentEl = autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.el
+  const currentEl = outputMode === "dde" ? publishedDdeTarget?.el ?? 0 : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.el
     : lockedPlane && uiMode !== "manual" ? (Number.isFinite(lockedPlane.el_a) ? lockedPlane.el_a : rotatorEl) : rotatorEl;
   const rotorOn = rotatorControlEnabled && rotatorConnected;
   const lastSpeechPreviewAt = useRef(0);
@@ -1404,10 +1393,10 @@ export default function App() {
     selectedAircraftId: lockedPlane?.icao24 ?? null,
     stationLocator: airscout?.station_a ?? myGrid,
     stationAltitudeM: myAltitudeM,
-    rotatorAz,
-    rotatorEl,
-    targetAz: lockedPlane ? lockedPlane.az_a : rotatorTargetAz,
-    targetEl: lockedPlane ? lockedPlane.el_a : rotatorTargetEl,
+    rotatorAz: outputMode === "dde" ? publishedDdeTarget?.az ?? null : rotatorAz,
+    rotatorEl: outputMode === "dde" ? publishedDdeTarget?.el ?? 0 : rotatorEl,
+    targetAz: outputMode === "dde" ? publishedDdeTarget?.az ?? null : lockedPlane ? lockedPlane.az_a : rotatorTargetAz,
+    targetEl: outputMode === "dde" ? publishedDdeTarget?.el ?? null : lockedPlane ? lockedPlane.el_a : rotatorTargetEl,
     pathBearing: dxBearing,
     dxLabel: dxCall,
     myLabel: myCallsign,
@@ -1578,7 +1567,11 @@ export default function App() {
           <span style={{ fontSize: 10, color: sourceDotColor }}>
             {activeSource ? "●" : "○"} {activeSource ?? "no source"} · {freshnessLabel}
           </span>
-          {rotatorConnected
+          {outputMode !== "hamlib"
+            ? <span style={{ fontSize: 10, color: "var(--text-muted)" }}>
+                {outputMode === "dde" ? "SatPC32 DDE" : "Rotator output off"}
+              </span>
+            : rotatorConnected
             ? <span style={{ fontSize: 10, color: "var(--green)" }}>● rotctld</span>
             : <span style={{ fontSize: 10, color: "var(--red)" }}>○ rotctld</span>}
           {airscout && (
@@ -1658,10 +1651,10 @@ export default function App() {
             selectedAircraftId={lockedPlane?.icao24 ?? null}
             stationLocator={airscout?.station_a ?? myGrid}
             stationAltitudeM={myAltitudeM}
-            rotatorAz={rotatorAz}
-            rotatorEl={rotatorEl}
-            targetAz={lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
-            targetEl={lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
+            rotatorAz={outputMode === "dde" ? publishedDdeTarget?.az ?? null : rotatorAz}
+            rotatorEl={outputMode === "dde" ? publishedDdeTarget?.el ?? 0 : rotatorEl}
+            targetAz={outputMode === "dde" ? publishedDdeTarget?.az ?? null : lockedPlane ? lockedPlane.az_a : rotatorTargetAz}
+            targetEl={outputMode === "dde" ? publishedDdeTarget?.el ?? null : lockedPlane ? lockedPlane.el_a : rotatorTargetEl}
             pathBearing={dxBearing}
             dxLabel={dxCall}
             myLabel={myCallsign}
@@ -1919,41 +1912,8 @@ export default function App() {
         {/* CENTRE: Rotator */}
         <div className="col" style={{ alignItems: "center", justifyContent: "flex-start", overflowY: "auto" }}>
           <div className="card" style={{ width: "100%", alignSelf: "stretch", flexShrink: 0 }}>
+            <SatPC32DDE onModeChange={setOutputMode} onTargetChange={setPublishedDdeTarget} />
             <div style={{ display: "flex", justifyContent: "flex-start", alignItems: "center", gap: 6, flexWrap: "nowrap", marginBottom: 8 }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                title={rotatorControlEnabled
-                  ? (rotatorConnected
-                    ? "Rotor control is on. Click to block all rotator movement commands."
-                    : "Rotor control is on but rotctld is not connected. Click to block all rotator movement commands.")
-                  : "Rotor control is off: no movement commands are sent. Click to re-enable."}
-                aria-pressed={!rotatorControlEnabled}
-                style={{
-                  fontSize: 10,
-                  padding: "4px 10px",
-                  whiteSpace: "nowrap",
-                  border: rotorOn ? "1px solid var(--green)" : "1px solid var(--red)",
-                  background: rotorOn ? "rgba(63,185,80,0.25)" : "rgba(248,81,73,0.25)",
-                  color: rotorOn ? "var(--green)" : "var(--red)",
-                }}
-                onClick={() => {
-                  const next = !rotatorControlEnabled;
-                  setRotatorControlEnabled(next);
-                  if (!next) return;
-                  // Re-sending the displayed pointing once control resumes
-                  const useLocked = uiMode !== "manual" && lockedPlane
-                    && Number.isFinite(lockedPlane.az_a) && Number.isFinite(lockedPlane.el_a);
-                  const az = useLocked ? lockedPlane!.az_a : rotatorTargetAz;
-                  const el = useLocked ? lockedPlane!.el_a : rotatorTargetEl;
-                  if (az === null || el === null || !rotatorConnected) return;
-                  rpc("set_rotator_control", { enabled: true })
-                    .then(() => rpc("rotator_set", { azimuth: az, elevation: el }))
-                    .catch(e => addLog(`Rotator: ${e}`));
-                }}
-              >
-                {rotorOn ? "Rotor: ON" : "Rotor: OFF"}
-              </button>
               <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
               <div style={{ display: "inline-flex", padding: 3, borderRadius: 8, border: "1px solid var(--border)", background: "var(--surface)", gap: 4 }}>
                 {(["rotator", "manual"] as const).map((mode) => (
@@ -2003,11 +1963,14 @@ export default function App() {
               </div>
             </div>
             <RotatorPanel
-              currentAz={rotatorAz} currentEl={rotatorEl}
-              targetAz={lockedPlane && uiMode !== "manual" ? lockedPlane.az_a : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.az : rotatorTargetAz}
-              targetEl={lockedPlane && uiMode !== "manual" ? lockedPlane.el_a : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.el : rotatorTargetEl}
+              currentAz={outputMode === "dde" ? publishedDdeTarget?.az ?? 0 : rotatorAz}
+              currentEl={outputMode === "dde" ? publishedDdeTarget?.el ?? 0 : rotatorEl}
+              targetAz={outputMode === "dde" ? publishedDdeTarget?.az ?? null : lockedPlane && uiMode !== "manual" ? lockedPlane.az_a : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.az : rotatorTargetAz}
+              targetEl={outputMode === "dde" ? publishedDdeTarget?.el ?? null : lockedPlane && uiMode !== "manual" ? lockedPlane.el_a : autoTargetInvalid && lastPlaneTarget ? lastPlaneTarget.el : rotatorTargetEl}
+              publishedTargetOnly={outputMode === "dde"}
               targetInvalid={autoTargetInvalid}
               connected={rotatorConnected}
+              hamlibEnabled={outputMode === "hamlib"}
               dxAz={dxBearing}
               dxLabel={dxCall}
               myLabel={myCallsign}
@@ -2275,7 +2238,7 @@ export default function App() {
                           }
                         }}
                       >
-                        {enabled ? "✓" : "+"} {source === "adsbexchange" ? "ADS-B Exchange" : source}
+                        {enabled ? "✓" : "+"} {source === "adsbexchange" ? "ADS-B Exchange" : source === "rtlsdr" ? "Local RTL-SDR" : source}
                       </button>
                       {enabled && (
                         <>
@@ -2311,6 +2274,13 @@ export default function App() {
               </div>
               <AircraftAccounts onLog={addLog} />
               <Dump1090Source load={loadDump1090Host} save={saveDump1090Host} onLog={addLog} />
+              {availableSources.includes("rtlsdr") && (
+                <LocalReceiver request={rpc} onLog={addLog} onChanged={() => {
+                  rpc("airscout_get_sources")
+                    .then(result => setSourceStatus(result as AirscoutSourceState))
+                    .catch(reason => addLog(`Cannot refresh aircraft sources: ${String(reason)}`));
+                }} />
+              )}
               {sourceStatus?.sources?.adsbexchange?.message && (
                 <div style={{ fontSize: 10, color: "var(--yellow)" }}>
                   ADS-B Exchange: {sourceStatus.sources.adsbexchange.message}

@@ -8,6 +8,8 @@ interface RotatorPanelProps {
   targetEl: number | null;
   targetInvalid?: boolean;
   connected: boolean;
+  hamlibEnabled?: boolean;
+  publishedTargetOnly?: boolean;
   dxAz?: number | null;
   dxLabel?: string | null;
   myLabel?: string | null;
@@ -353,6 +355,8 @@ export default function RotatorPanel({
   onSpeechIntervalSecChange,
   mode = "rotator",
   onSetPosition, onStop, onPark, onConnect, onSync, syncDisabled = false, clicksBlocked = false, onBlockedClick,
+  hamlibEnabled = true,
+  publishedTargetOnly = false,
 }: RotatorPanelProps) {
   const [manualAz, setManualAz] = useState(currentAz.toFixed(1));
   const [manualEl, setManualEl] = useState(currentEl.toFixed(1));
@@ -411,10 +415,12 @@ export default function RotatorPanel({
   const speechSupported = isSpeechSupported();
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+    <div data-testid="rotator-dials" data-current-az={currentAz} data-current-el={currentEl}
+      data-target-az={targetAz ?? ""} data-target-el={targetEl ?? ""}
+      style={{ display: "flex", flexDirection: "column", gap: 6 }}>
 
       {/* Connection bar */}
-      {!connected && (
+      {hamlibEnabled && !connected && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "nowrap" }}>
           <input value={host} onChange={e => setHost(e.target.value)}
             placeholder="host" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
@@ -495,7 +501,10 @@ export default function RotatorPanel({
             </div>
           </div>
 
-          {!targetInvalid && (azErr !== null || elErr !== null) && (
+          {publishedTargetOnly && <div role="status" aria-label="DDE dial reference" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+            {targetInvalid ? "No valid published DDE target." : "Hands show published DDE target; no measured PST position."}
+          </div>}
+          {!publishedTargetOnly && !targetInvalid && (azErr !== null || elErr !== null) && (
             <div style={{
               display: "flex",
               gap: 10,
@@ -544,13 +553,13 @@ export default function RotatorPanel({
           </label>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "nowrap" }}>
-          <button className="btn-primary" style={rowBtn} disabled={!connected} onClick={handleGo}>
+          <button className="btn-primary" style={rowBtn} disabled={!connected || !hamlibEnabled || !isManualMode} onClick={handleGo}>
             ▶ Go
           </button>
           <button className="btn-secondary" style={rowBtn} disabled={!connected} onClick={onStop}>
             ■ Stop
           </button>
-          <button className="btn-secondary" style={rowBtn} disabled={!connected} onClick={onPark}>
+          <button className="btn-secondary" style={rowBtn} disabled={!connected || !hamlibEnabled} onClick={onPark}>
             ⌂ Park
           </button>
           <button className="btn-secondary" style={rowBtn}

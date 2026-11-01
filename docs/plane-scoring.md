@@ -52,13 +52,16 @@ Altitude, terrain clearance, antenna patterns, scattering aspect, Doppler spread
 ## How the score and ranking are used
 
 - **Auto-lock:** runs only from idle, completed or aborted states. Picks the highest-ranked aircraft among planes passing the filters with a **legacy score** of at least 0.05. Relative dB/index values are never compared with 0.05.
-- **Tracking:** every update recomputes the score. Below 0.05 the plane is out of window: `plane_out_of_window` is emitted and the plane is unlocked, unless it matches the watched flight number. The watched flight remains locked even at 0%.
+- **Automatic tracking:** every update recomputes the score. Below 0.05 the plane is out of window: `plane_out_of_window` is emitted and the plane is unlocked, unless it matches the watched flight number or a local pre-window selection is waiting to enter.
+- **Manual selection:** identity survives score/filter changes and temporary missing positions, up to 180 seconds without a local ADS-B record (120 seconds for network sources). Stale positions do not drive DDE/Hamlib. Explicit unlock, source change, ground report and retention expiry still release it.
 - **Sorting:** candidates and Flight Data follow the selected method. Aircraft outside geometry gates remain behind eligible geometry in alternative rankings, even when a watched flight bypasses optional filters.
-- **Active locks:** selecting another method does not choose a different aircraft or change watched-flight exemptions. Normal updates still enforce the existing filters and legacy score threshold.
+- **Active locks:** selecting another method does not choose a different aircraft or change watched-flight exemptions. Automatic locks retain their geometry policy; manual selection remains independent of ranking.
 
 ## Limitations
 
 Flight Data's **Use** column is a separate report-time prediction of remaining time inside the geometry hard gates (mutual radio visibility and inward-facing endpoint bearings). It does not use optional filters or the score threshold. Legacy and range-product methods ignore duration; window-weighted ranking uses the same geometric model with the age and availability rules above. See [the user guide](user-guide.md#flight-data-and-candidate-highlights). Implementations: [`airwsjtx/ranking.py`](../airwsjtx/ranking.py), [`src/lib/aircraftRanking.ts`](../src/lib/aircraftRanking.ts), [`src/lib/usableTime.ts`](../src/lib/usableTime.ts).
+
+Use is not an aircraft-retention countdown. Each position/heading/speed/altitude report recalculates it under constant-motion assumptions: a turn or descent can change a 20-minute estimate to 5 minutes at the next update. Missing fresh velocity shows an unavailable estimate, not a deleted aircraft. Local positions remain visible for less than 120 seconds after their last fix; the underlying record is retained for 180 seconds after its last valid message. Retained coordinates are not live or extrapolated positions.
 
 - **Station altitudes:** the bridge passes both MY (station A) and DX (station B) altitudes to `scatter_geometry`. Each defaults to 0 m unless entered in the Stations panel.
 - **Altitude:** enters both elevation angles and slant ranges, in addition to the optional minimum-altitude filter.

@@ -16,6 +16,8 @@ interface LockState {
   rotator_az?: number | null;
   rotator_el?: number | null;
   position_updated_epoch_s?: number | null;
+  position_source?: string | null;
+  position_max_age_s?: number;
 }
 
 interface PlaneLockPanelProps {
@@ -111,8 +113,11 @@ export default function PlaneLockPanel({
   const stateInfo = STATE_LABELS[sessionState] ?? STATE_LABELS.idle;
   const updateAge = locked?.position_updated_epoch_s != null
     ? Math.max(0, Math.floor(nowEpochS - locked.position_updated_epoch_s)) : null;
-  const positionStale = locked?.position_updated_epoch_s != null
-    && nowEpochS - locked.position_updated_epoch_s > pollIntervalS + 5;
+  const positionAge = locked?.position_updated_epoch_s != null
+    ? Math.max(0, nowEpochS - locked.position_updated_epoch_s) : null;
+  const positionMaxAge = locked?.position_max_age_s ?? pollIntervalS + 5;
+  const positionStale = positionAge !== null && (locked?.position_source === "rtlsdr"
+    ? positionAge >= positionMaxAge : positionAge > positionMaxAge);
 
   // State machine progression steps
   const steps = ["idle", "plane_locked", "tracking", "ready", "active_qso"];
